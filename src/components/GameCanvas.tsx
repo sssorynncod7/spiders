@@ -18,7 +18,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(null);
-  const shotTimestampsRef = useRef<number[]>([]);
+  const lastTouchTimeRef = useRef<number>(0);
   const stateRef = useRef<GameState>({
     player: {
       x: 0,
@@ -74,6 +74,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     ];
     const colorPair = colors[Math.floor(Math.random() * colors.length)];
     
+    const windows: Point[] = [];
+    for (let wx = 15; wx < width - 15; wx += 30) {
+      for (let wy = 20; wy < height; wy += 40) {
+        if (Math.random() > 0.4) {
+          windows.push({ x: wx, y: wy });
+        }
+      }
+    }
+    
     return {
       x,
       y: ABYSS_Y - height,
@@ -83,6 +92,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       darkColor: colorPair.dark,
       hasAntenna: Math.random() > 0.6,
       antennaX: width * 0.2 + Math.random() * (width * 0.6),
+      windows,
     };
   };
 
@@ -103,15 +113,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   };
 
   const fireWeb = (web: Web, pos: Point) => {
-    const now = Date.now();
-    shotTimestampsRef.current = shotTimestampsRef.current.filter(t => now - t < 1000);
-    
-    if (shotTimestampsRef.current.length >= 2) {
-      return; // Rate limit exceeded: max 2 webs per second
-    }
-
-    shotTimestampsRef.current.push(now);
-
     const state = stateRef.current;
     const worldX = pos.x + state.cameraX;
     const worldY = pos.y + state.cameraY;
@@ -155,6 +156,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (stateRef.current.isGameOver) return;
+    // Ignore mouse events if they were triggered by a touch event recently (prevents double-firing on mobile)
+    if (Date.now() - lastTouchTimeRef.current < 500) return;
+
     const isRightClick = e.button === 2;
     const pos = getPointerPos(e.clientX, e.clientY);
     stateRef.current.pointer = pos;
@@ -163,6 +167,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   };
 
   const handleMouseUp = (e: React.MouseEvent) => {
+    if (Date.now() - lastTouchTimeRef.current < 500) return;
     const isRightClick = e.button === 2;
     const web = isRightClick ? stateRef.current.player.rightWeb : stateRef.current.player.leftWeb;
     web.active = false;
@@ -170,7 +175,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    // Prevent default to eliminate 300ms mobile tap delay and double-firing
+    if (e.cancelable) e.preventDefault();
+    
     if (stateRef.current.isGameOver) return;
+    lastTouchTimeRef.current = Date.now();
     const state = stateRef.current;
     
     Array.from(e.changedTouches).forEach(touch => {
@@ -184,12 +193,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.cancelable) e.preventDefault();
     if (e.touches.length > 0) {
       stateRef.current.pointer = getPointerPos(e.touches[0].clientX, e.touches[0].clientY);
     }
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
+    if (e.cancelable) e.preventDefault();
     const state = stateRef.current;
     let hasLeft = false;
     let hasRight = false;
@@ -367,18 +378,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
       // Windows
       ctx.fillStyle = 'rgba(255, 255, 150, 0.15)';
-      for (let wx = b.x + 15; wx < b.x + b.width - 15; wx += 30) {
-        const startY = Math.max(b.y + 20, state.cameraY - 50);
-        const endY = Math.min(b.y + canvasHeight * 3, state.cameraY + canvasHeight + 50);
-        const gridOffset = startY % 40;
-        for (let wy = startY - gridOffset; wy < endY; wy += 40) {
-          if (wy < b.y + 20) continue;
-          const pseudoRandom = Math.abs(Math.sin(wx * 12.9898 + wy * 78.233) * 43758.5453) % 1;
-          if (pseudoRandom > 0.4) {
-            ctx.fillRect(wx, wy, 12, 20);
-          }
+      
+      // Only draw windows that are visible on screen
+      const minVisibleY = state.cameraY - 50;
+      const maxVisibleY = state.cameraY + canvasHeight + 50;
+      
+      b.windows.forEach(w => {
+        const worldY = b.y + w.y;
+        if (worldY > minVisibleY && worldY < maxVisibleY) {
+          ctx.fillRect(b.x + w.x, worldY, 12, 20);
         }
-      }
+      });
     });
 
     const colors = getCostumeColors(costume);
@@ -397,10 +407,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
         ctx.arc(web.anchor.x, web.anchor.y, 5, 0, Math.PI * 2);
         ctx.fillStyle = colors.web;
         ctx.fill();
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = colors.web;
+        
+        ctx.globalAlpha = 0.4;
+        ctx.beginPath();
+        ctx.arc(web.anchor.x, web.anchor.y, 12, 0, Math.PI * 2);
         ctx.fill();
-        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1.0;
       }
     };
     drawWeb(state.player.leftWeb);
@@ -478,14 +490,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
     // Draw Crosshair (Aiming indicator)
     if (!state.isGameOver) {
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(state.pointer.x, state.pointer.y, 10, 0, Math.PI * 2);
-      ctx.moveTo(state.pointer.x - 15, state.pointer.y);
-      ctx.lineTo(state.pointer.x + 15, state.pointer.y);
-      ctx.moveTo(state.pointer.x, state.pointer.y - 15);
-      ctx.lineTo(state.pointer.x, state.pointer.y + 15);
+      
+      const gap = 6;
+      const len = 10;
+      
+      // Top
+      ctx.moveTo(state.pointer.x, state.pointer.y - gap);
+      ctx.lineTo(state.pointer.x, state.pointer.y - gap - len);
+      // Bottom
+      ctx.moveTo(state.pointer.x, state.pointer.y + gap);
+      ctx.lineTo(state.pointer.x, state.pointer.y + gap + len);
+      // Left
+      ctx.moveTo(state.pointer.x - gap, state.pointer.y);
+      ctx.lineTo(state.pointer.x - gap - len, state.pointer.y);
+      // Right
+      ctx.moveTo(state.pointer.x + gap, state.pointer.y);
+      ctx.lineTo(state.pointer.x + gap + len, state.pointer.y);
+      
+      // Center dot
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.arc(state.pointer.x, state.pointer.y, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      
       ctx.stroke();
     }
   };
@@ -519,7 +548,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
         onContextMenu={(e) => e.preventDefault()}
-        className="block cursor-none"
+        className="block cursor-none touch-none select-none"
+        style={{ WebkitTapHighlightColor: 'transparent' }}
       />
     </div>
   );

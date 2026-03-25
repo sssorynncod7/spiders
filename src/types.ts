@@ -18,6 +18,7 @@ export interface Building {
   darkColor: string;
   hasAntenna: boolean;
   antennaX: number;
+  windows: Point[];
 }
 
 export type CostumeId = 'classic' | 'symbiote' | 'miles' | 'gwen' | 'iron' | '2099' | 'noir';
