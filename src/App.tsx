@@ -117,7 +117,7 @@ export default function App() {
               className="mb-6"
             >
               <h1 className="text-5xl md:text-7xl font-black tracking-tighter text-red-600 uppercase italic drop-shadow-[0_5px_15px_rgba(239,68,68,0.5)]">
-                Spider-Swing
+                TinySpiders
               </h1>
               <p className="text-slate-400 text-base md:text-lg font-medium tracking-wide mt-1">
                 CITY ADVENTURE
