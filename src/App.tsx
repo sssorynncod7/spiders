@@ -7,13 +7,13 @@ import { CostumeId } from './types';
 type Screen = 'START' | 'PLAYING' | 'GAMEOVER';
 
 const COSTUMES: { id: CostumeId; name: string; color1: string; color2: string }[] = [
-  { id: 'classic', name: 'Klasik', color1: 'bg-red-500', color2: 'bg-blue-600' },
-  { id: 'symbiote', name: 'Sembiyot', color1: 'bg-black', color2: 'bg-white' },
-  { id: 'miles', name: 'Miles', color1: 'bg-black', color2: 'bg-red-500' },
-  { id: 'gwen', name: 'Gwen', color1: 'bg-white', color2: 'bg-pink-500' },
-  { id: 'iron', name: 'Iron', color1: 'bg-red-600', color2: 'bg-yellow-400' },
-  { id: '2099', name: '2099', color1: 'bg-blue-800', color2: 'bg-red-500' },
-  { id: 'noir', name: 'Noir', color1: 'bg-stone-800', color2: 'bg-stone-950' },
+  { id: 'classic', name: 'Classic Spider-Man', color1: 'bg-red-500', color2: 'bg-blue-600' },
+  { id: 'symbiote', name: 'Symbiote', color1: 'bg-black', color2: 'bg-white' },
+  { id: 'miles', name: 'Miles Morales', color1: 'bg-black', color2: 'bg-red-500' },
+  { id: 'gwen', name: 'Spider-Gwen', color1: 'bg-white', color2: 'bg-pink-500' },
+  { id: 'iron', name: 'Iron Spider', color1: 'bg-red-600', color2: 'bg-yellow-400' },
+  { id: '2099', name: 'Spider-Man 2099', color1: 'bg-blue-800', color2: 'bg-red-500' },
+  { id: 'noir', name: 'Spider-Man Noir', color1: 'bg-stone-800', color2: 'bg-stone-950' },
 ];
 
 const CostumePreview = ({ costumeId }: { costumeId: CostumeId }) => {
@@ -128,7 +128,7 @@ export default function App() {
             <div className="mb-6 w-full bg-slate-900/50 p-4 rounded-3xl border border-slate-800 backdrop-blur-sm flex flex-col items-center">
               <div className="flex items-center justify-center gap-2 mb-1 text-slate-400 text-sm font-bold uppercase tracking-wider">
                 <Shirt size={16} />
-                <span>Kostüm Önizleme</span>
+                <span>kayra naber</span>
               </div>
               
               <CostumePreview costumeId={costume} />
