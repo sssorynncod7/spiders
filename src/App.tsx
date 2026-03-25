@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import Game3D from './components/Game3D';
+import { GameCanvas } from './components/GameCanvas';
 import { Trophy, Play, HelpCircle, X, MousePointer2, Info, Shirt, Users, Box, Code } from 'lucide-react';
 import { CostumeId } from './types';
 
@@ -212,7 +212,7 @@ export default function App() {
               </button>
             </div>
 
-            <Game3D 
+            <GameCanvas 
               costume={costume}
               onGameOver={handleGameOver} 
               onScoreUpdate={setScore}
