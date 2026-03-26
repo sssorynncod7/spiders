@@ -1,9 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { GameState, Building, Point, CostumeId, Web, Obstacle } from '../types';
 
-const GRAVITY = 0.5;
-const AIR_FRICTION = 0.998;
-const RETRACT_SPEED = 5; // Base retract speed
+const GRAVITY = 0.25;
+const AIR_FRICTION = 0.995;
+const RETRACT_SPEED = 2.5; // Base retract speed
 const DUAL_RETRACT_MULTIPLIER = 3.5; // Stronger pull when both webs are active
 const BUILDING_SPACING = 300;
 const ABYSS_Y = 2000;
@@ -24,8 +24,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     player: {
       x: 0,
       y: ABYSS_Y - 600,
-      vx: 25,
-      vy: -15,
+      vx: 12,
+      vy: -8,
       radius: 15,
       rotation: 0,
       leftWeb: { active: false, anchor: null, restLength: 0 },
@@ -184,8 +184,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     const nowDual = state.player.leftWeb.active && state.player.rightWeb.active;
     if (wasDual && !nowDual && !state.player.leftWeb.active && !state.player.rightWeb.active) {
       const speed = Math.hypot(state.player.vx, state.player.vy);
-      if (speed > 15) {
-        state.player.vx *= 1.2;
+      if (speed > 8) {
+        state.player.vx *= 1.15;
         state.player.vy *= 1.1;
       }
     }
@@ -243,8 +243,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     const nowDual = state.player.leftWeb.active && state.player.rightWeb.active;
     if (wasDual && !nowDual && !state.player.leftWeb.active && !state.player.rightWeb.active) {
       const speed = Math.hypot(state.player.vx, state.player.vy);
-      if (speed > 15) {
-        state.player.vx *= 1.2;
+      if (speed > 8) {
+        state.player.vx *= 1.15;
         state.player.vy *= 1.1;
       }
     }
@@ -353,7 +353,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
           
           // Bounce back
           player.vx *= -0.5;
-          player.vy = -10;
+          player.vy = -6;
           
           // Break webs
           player.leftWeb.active = false;
