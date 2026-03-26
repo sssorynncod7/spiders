@@ -1,20 +1,23 @@
 import React, { useEffect, useRef } from 'react';
-import { GameState, Building, Point, CostumeId, Web } from '../types';
+import { GameState, Building, Point, CostumeId, Web, Obstacle, Coin, Upgrades } from '../types';
 
 const GRAVITY = 0.5;
 const AIR_FRICTION = 0.998;
-const RETRACT_SPEED = 5; // Base retract speed
-const DUAL_RETRACT_MULTIPLIER = 3.5; // Stronger pull when both webs are active
+const BASE_RETRACT_SPEED = 5; // Base retract speed
+const BASE_DUAL_RETRACT_MULTIPLIER = 3.5; // Stronger pull when both webs are active
 const BUILDING_SPACING = 300;
 const ABYSS_Y = 2000;
 
 interface GameCanvasProps {
   costume: CostumeId;
+  upgrades: Upgrades;
   onGameOver: (score: number) => void;
   onScoreUpdate: (score: number) => void;
+  onLivesUpdate: (lives: number) => void;
+  onCoinCollected: () => void;
 }
 
-export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onScoreUpdate }) => {
+export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, upgrades, onGameOver, onScoreUpdate, onLivesUpdate, onCoinCollected }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(null);
@@ -29,9 +32,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       rotation: 0,
       leftWeb: { active: false, anchor: null, restLength: 0 },
       rightWeb: { active: false, anchor: null, restLength: 0 },
+      invulnerableUntil: 0,
     },
     buildings: [],
+    obstacles: [],
+    coins: [],
     score: 0,
+    lives: 5 + upgrades.maxLives,
     cameraX: -200,
     cameraY: ABYSS_Y - 600,
     pointer: { x: 500, y: 300 },
@@ -54,14 +61,47 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Initialize buildings
+  // Initialize buildings, obstacles, and coins
   useEffect(() => {
     const initialBuildings: Building[] = [];
+    const initialObstacles: Obstacle[] = [];
+    const initialCoins: Coin[] = [];
     for (let i = -1; i < 10; i++) {
-      initialBuildings.push(generateBuilding(i * BUILDING_SPACING));
+      const bX = i * BUILDING_SPACING;
+      initialBuildings.push(generateBuilding(bX));
+      if (i > 0) {
+        if (Math.random() > 0.3) {
+          initialObstacles.push(generateObstacle(bX + BUILDING_SPACING / 2));
+        }
+        if (Math.random() > 0.4) {
+          initialCoins.push(generateCoin(bX + BUILDING_SPACING / 2 + (Math.random() * 100 - 50)));
+        }
+      }
     }
     stateRef.current.buildings = initialBuildings;
+    stateRef.current.obstacles = initialObstacles;
+    stateRef.current.coins = initialCoins;
   }, []);
+
+  const generateCoin = (x: number): Coin => {
+    return {
+      x,
+      y: ABYSS_Y - 300 - Math.random() * 500, // Random height in the air
+      radius: 12,
+      collected: false,
+      offsetY: Math.random() * Math.PI * 2,
+    };
+  };
+
+  const generateObstacle = (x: number): Obstacle => {
+    return {
+      x,
+      y: ABYSS_Y - 400 - Math.random() * 600, // Random height in the air
+      radius: 20,
+      type: Math.random() > 0.5 ? 'drone' : 'mine',
+      offsetY: Math.random() * Math.PI * 2, // Random starting phase for floating
+    };
+  };
 
   const generateBuilding = (x: number): Building => {
     const width = 120 + Math.random() * 150;
@@ -181,8 +221,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     if (wasDual && !nowDual && !state.player.leftWeb.active && !state.player.rightWeb.active) {
       const speed = Math.hypot(state.player.vx, state.player.vy);
       if (speed > 15) {
-        state.player.vx *= 1.2;
-        state.player.vy *= 1.1;
+        const boostMultiplier = 1.2 + (upgrades.slingshotBoost * 0.05);
+        state.player.vx *= boostMultiplier;
+        state.player.vy *= (1.0 + (upgrades.slingshotBoost * 0.05));
       }
     }
   };
@@ -240,8 +281,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     if (wasDual && !nowDual && !state.player.leftWeb.active && !state.player.rightWeb.active) {
       const speed = Math.hypot(state.player.vx, state.player.vy);
       if (speed > 15) {
-        state.player.vx *= 1.2;
-        state.player.vy *= 1.1;
+        const boostMultiplier = 1.2 + (upgrades.slingshotBoost * 0.05);
+        state.player.vx *= boostMultiplier;
+        state.player.vy *= (1.0 + (upgrades.slingshotBoost * 0.05));
       }
     }
   };
@@ -312,15 +354,53 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     const maxCamY = ABYSS_Y - canvasHeight + 200;
     if (state.cameraY > maxCamY) state.cameraY = maxCamY;
 
-    // Generate new buildings
+    // Generate new buildings and obstacles
     const lastBuilding = state.buildings[state.buildings.length - 1];
     if (lastBuilding.x - state.cameraX < canvasWidth + 500) {
-      state.buildings.push(generateBuilding(lastBuilding.x + BUILDING_SPACING + Math.random() * 200));
+      const nextX = lastBuilding.x + BUILDING_SPACING + Math.random() * 200;
+      state.buildings.push(generateBuilding(nextX));
+      if (Math.random() > 0.3) {
+        state.obstacles.push(generateObstacle(nextX - BUILDING_SPACING / 2));
+      }
     }
 
-    // Remove old buildings
+    // Remove old buildings and obstacles
     if (state.buildings[0].x - state.cameraX < -1000) {
       state.buildings.shift();
+    }
+    if (state.obstacles.length > 0 && state.obstacles[0].x - state.cameraX < -1000) {
+      state.obstacles.shift();
+    }
+
+    // Obstacle collision and movement
+    const now = Date.now();
+    for (const obs of state.obstacles) {
+      // Floating animation
+      obs.offsetY += 0.05;
+      
+      if (now > player.invulnerableUntil) {
+        const actualY = obs.y + Math.sin(obs.offsetY) * 20;
+        const dist = Math.hypot(player.x - obs.x, player.y - actualY);
+        if (dist < player.radius + obs.radius) {
+          state.lives -= 1;
+          onLivesUpdate(state.lives);
+          player.invulnerableUntil = now + 1500; // 1.5s invulnerability
+          
+          // Bounce back
+          player.vx *= -0.5;
+          player.vy = -10;
+          
+          // Break webs
+          player.leftWeb.active = false;
+          player.rightWeb.active = false;
+          
+          if (state.lives <= 0) {
+            state.isGameOver = true;
+            onGameOver(state.score);
+          }
+          break; // Only hit one obstacle per frame
+        }
+      }
     }
 
     // Score based on distance
@@ -436,6 +516,60 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       }
     }
 
+    // Draw Obstacles
+    state.obstacles.forEach(obs => {
+      const actualY = obs.y + Math.sin(obs.offsetY) * 20;
+      
+      ctx.save();
+      ctx.translate(obs.x, actualY);
+      
+      if (obs.type === 'mine') {
+        // Spiky floating mine
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.arc(0, 0, obs.radius, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.fillStyle = '#b91c1c';
+        for (let i = 0; i < 8; i++) {
+          const angle = (i / 8) * Math.PI * 2 + obs.offsetY;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(angle) * obs.radius, Math.sin(angle) * obs.radius);
+          ctx.lineTo(Math.cos(angle - 0.2) * (obs.radius - 5), Math.sin(angle - 0.2) * (obs.radius - 5));
+          ctx.lineTo(Math.cos(angle) * (obs.radius + 8), Math.sin(angle) * (obs.radius + 8));
+          ctx.lineTo(Math.cos(angle + 0.2) * (obs.radius - 5), Math.sin(angle + 0.2) * (obs.radius - 5));
+          ctx.fill();
+        }
+        
+        // Glowing center
+        ctx.fillStyle = '#fca5a5';
+        ctx.beginPath();
+        ctx.arc(0, 0, obs.radius * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Drone
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(-obs.radius, -obs.radius * 0.4, obs.radius * 2, obs.radius * 0.8);
+        
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.arc(0, 0, obs.radius * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Propellers
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-obs.radius, -obs.radius * 0.4);
+        ctx.lineTo(-obs.radius + Math.cos(obs.offsetY * 10) * 10, -obs.radius * 0.4 - 5);
+        ctx.moveTo(obs.radius, -obs.radius * 0.4);
+        ctx.lineTo(obs.radius + Math.cos(obs.offsetY * 10) * 10, -obs.radius * 0.4 - 5);
+        ctx.stroke();
+      }
+      
+      ctx.restore();
+    });
+
     const colors = getCostumeColors(costume);
 
     // Draw Webs
@@ -466,6 +600,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     // Draw Player
     const p = state.player;
     const velocityAngle = Math.atan2(p.vy, p.vx);
+    
+    // Flashing effect if invulnerable
+    const isInvulnerable = Date.now() < p.invulnerableUntil;
+    if (isInvulnerable && Math.floor(Date.now() / 100) % 2 === 0) {
+      ctx.globalAlpha = 0.5;
+    }
     
     // Motion Blur (Trail)
     if (speed > 15) {
@@ -549,6 +689,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     drawArm(p.rightWeb, 6); // Right arm
 
     ctx.restore();
+    ctx.globalAlpha = 1.0; // Reset alpha after player draw
 
     // Draw Crosshair (Aiming indicator)
     if (!state.isGameOver) {
