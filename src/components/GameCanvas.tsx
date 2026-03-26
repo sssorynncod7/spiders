@@ -1,10 +1,10 @@
 import React, { useEffect, useRef } from 'react';
 import { GameState, Building, Point, CostumeId, Web } from '../types';
 
-const GRAVITY = 0.6;
-const AIR_FRICTION = 0.995;
-const RETRACT_SPEED = 4; // Base retract speed
-const DUAL_RETRACT_MULTIPLIER = 2.5; // Stronger pull when both webs are active
+const GRAVITY = 0.5;
+const AIR_FRICTION = 0.998;
+const RETRACT_SPEED = 5; // Base retract speed
+const DUAL_RETRACT_MULTIPLIER = 3.5; // Stronger pull when both webs are active
 const BUILDING_SPACING = 300;
 const ABYSS_Y = 2000;
 
@@ -168,10 +168,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
   const handleMouseUp = (e: React.MouseEvent) => {
     if (Date.now() - lastTouchTimeRef.current < 500) return;
+    const state = stateRef.current;
+    const wasDual = state.player.leftWeb.active && state.player.rightWeb.active;
+    
     const isRightClick = e.button === 2;
-    const web = isRightClick ? stateRef.current.player.rightWeb : stateRef.current.player.leftWeb;
+    const web = isRightClick ? state.player.rightWeb : state.player.leftWeb;
     web.active = false;
     web.anchor = null;
+
+    // Slingshot effect for mouse too
+    const nowDual = state.player.leftWeb.active && state.player.rightWeb.active;
+    if (wasDual && !nowDual && !state.player.leftWeb.active && !state.player.rightWeb.active) {
+      const speed = Math.hypot(state.player.vx, state.player.vy);
+      if (speed > 15) {
+        state.player.vx *= 1.2;
+        state.player.vy *= 1.1;
+      }
+    }
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -202,6 +215,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (e.cancelable) e.preventDefault();
     const state = stateRef.current;
+    
+    const wasDual = state.player.leftWeb.active && state.player.rightWeb.active;
+    
     let hasLeft = false;
     let hasRight = false;
     
@@ -217,6 +233,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     if (!hasRight) {
       state.player.rightWeb.active = false;
       state.player.rightWeb.anchor = null;
+    }
+
+    // Slingshot effect: if releasing both while moving fast, give a boost
+    const nowDual = state.player.leftWeb.active && state.player.rightWeb.active;
+    if (wasDual && !nowDual && !state.player.leftWeb.active && !state.player.rightWeb.active) {
+      const speed = Math.hypot(state.player.vx, state.player.vy);
+      if (speed > 15) {
+        state.player.vx *= 1.2;
+        state.player.vy *= 1.1;
+      }
     }
   };
 
@@ -383,13 +409,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       const minVisibleY = state.cameraY - 50;
       const maxVisibleY = state.cameraY + canvasHeight + 50;
       
+      // Batch window drawing for performance
+      ctx.beginPath();
       b.windows.forEach(w => {
         const worldY = b.y + w.y;
         if (worldY > minVisibleY && worldY < maxVisibleY) {
-          ctx.fillRect(b.x + w.x, worldY, 12, 20);
+          ctx.rect(b.x + w.x, worldY, 12, 20);
         }
       });
+      ctx.fill();
     });
+
+    // Draw Wind Lines (Speed effect)
+    const speed = Math.hypot(state.player.vx, state.player.vy);
+    if (speed > 20) {
+      ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(0.3, (speed - 20) / 100)})`;
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 15; i++) {
+        const x = (Math.random() * canvasWidth);
+        const y = (Math.random() * canvasHeight);
+        const len = speed * 2;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - (state.player.vx / speed) * len, y - (state.player.vy / speed) * len);
+        ctx.stroke();
+      }
+    }
 
     const colors = getCostumeColors(costume);
 
@@ -420,11 +465,28 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
     // Draw Player
     const p = state.player;
+    const velocityAngle = Math.atan2(p.vy, p.vx);
+    
+    // Motion Blur (Trail)
+    if (speed > 15) {
+      ctx.globalAlpha = 0.3;
+      for (let i = 1; i < 4; i++) {
+        ctx.save();
+        ctx.translate(p.x - p.vx * i * 0.5, p.y - p.vy * i * 0.5);
+        ctx.rotate(velocityAngle);
+        ctx.fillStyle = colors.primary;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 14, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.globalAlpha = 1.0;
+    }
+
     ctx.save();
     ctx.translate(p.x, p.y);
     
     // Rotation based on velocity
-    const velocityAngle = Math.atan2(p.vy, p.vx);
     ctx.rotate(velocityAngle);
 
     // Legs (trailing behind)
@@ -517,6 +579,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       
       ctx.stroke();
     }
+
+    // Draw Speed Bar (Mobile-based UI)
+    const barWidth = 150;
+    const barHeight = 8;
+    const barX = canvasWidth / 2 - barWidth / 2;
+    const barY = canvasHeight - 40;
+    
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.roundRect?.(barX - 5, barY - 20, barWidth + 10, barHeight + 25, 10);
+    ctx.fill();
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('HIZ', canvasWidth / 2, barY - 8);
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillRect(barX, barY, barWidth, barHeight);
+    
+    const speedFill = Math.min(1, speed / 60);
+    const speedColor = speed > 40 ? '#ef4444' : speed > 20 ? '#eab308' : '#22c55e';
+    ctx.fillStyle = speedColor;
+    ctx.fillRect(barX, barY, barWidth * speedFill, barHeight);
   };
 
   const loop = () => {
