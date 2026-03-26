@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GameCanvas } from './components/GameCanvas';
-import { Trophy, Play, HelpCircle, X, MousePointer2, Info, Shirt, Users, Box, Code, Heart, Coins, Zap, ArrowUpCircle } from 'lucide-react';
-import { CostumeId, Upgrades } from './types';
+import { Trophy, Play, HelpCircle, X, MousePointer2, Info, Shirt, Users, Box, Code, Heart } from 'lucide-react';
+import { CostumeId } from './types';
 
 type Screen = 'START' | 'PLAYING' | 'GAMEOVER';
 
@@ -70,36 +70,11 @@ export default function App() {
   const [highScore, setHighScore] = useState(0);
   const [showHowTo, setShowHowTo] = useState(false);
   const [showAboutUs, setShowAboutUs] = useState(false);
-  const [showUpgrades, setShowUpgrades] = useState(false);
   const [costume, setCostume] = useState<CostumeId>('classic');
-  const [coins, setCoins] = useState(0);
-  const [upgrades, setUpgrades] = useState<Upgrades>({
-    webStrength: 0,
-    slingshotBoost: 0,
-    maxLives: 0
-  });
-
-  const upgradeCosts = {
-    webStrength: [50, 100, 200, 400, 800],
-    slingshotBoost: [50, 100, 200, 400, 800],
-    maxLives: [100, 300, 500]
-  };
 
   useEffect(() => {
     const saved = localStorage.getItem('spider-swing-highscore');
     if (saved) setHighScore(parseInt(saved));
-    
-    const savedCoins = localStorage.getItem('spider-swing-coins');
-    if (savedCoins) setCoins(parseInt(savedCoins));
-
-    const savedUpgrades = localStorage.getItem('spider-swing-upgrades');
-    if (savedUpgrades) {
-      try {
-        setUpgrades(JSON.parse(savedUpgrades));
-      } catch (e) {
-        console.error('Failed to parse upgrades');
-      }
-    }
     
     const savedCostume = localStorage.getItem('spider-swing-costume') as CostumeId;
     if (savedCostume && COSTUMES.find(c => c.id === savedCostume)) {
@@ -110,29 +85,6 @@ export default function App() {
   const handleCostumeChange = (id: CostumeId) => {
     setCostume(id);
     localStorage.setItem('spider-swing-costume', id);
-  };
-
-  const handleUpgrade = (type: keyof Upgrades) => {
-    const currentLevel = upgrades[type];
-    const cost = upgradeCosts[type][currentLevel];
-    if (cost && coins >= cost) {
-      const newCoins = coins - cost;
-      const newUpgrades = { ...upgrades, [type]: currentLevel + 1 };
-      
-      setCoins(newCoins);
-      setUpgrades(newUpgrades);
-      
-      localStorage.setItem('spider-swing-coins', newCoins.toString());
-      localStorage.setItem('spider-swing-upgrades', JSON.stringify(newUpgrades));
-    }
-  };
-
-  const handleCoinCollected = () => {
-    setCoins(prev => {
-      const newCoins = prev + 1;
-      localStorage.setItem('spider-swing-coins', newCoins.toString());
-      return newCoins;
-    });
   };
 
   const handleGameOver = (finalScore: number) => {
@@ -207,7 +159,7 @@ export default function App() {
               <button
                 onClick={() => {
                   setScore(0);
-                  setLives(5 + upgrades.maxLives);
+                  setLives(5);
                   setScreen('PLAYING');
                 }}
                 className="group relative flex items-center justify-center gap-3 bg-red-600 hover:bg-red-500 text-white py-4 px-8 rounded-2xl font-bold text-xl transition-all hover:scale-105 active:scale-95 shadow-[0_0_20px_rgba(239,68,68,0.3)]"
@@ -217,13 +169,6 @@ export default function App() {
               </button>
 
               <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => setShowUpgrades(true)}
-                  className="col-span-2 flex items-center justify-center gap-2 bg-yellow-600 hover:bg-yellow-500 text-white py-4 px-2 rounded-2xl font-bold text-lg transition-all hover:scale-105 active:scale-95 shadow-[0_0_15px_rgba(202,138,4,0.3)]"
-                >
-                  <Zap size={20} className="fill-current" />
-                  GÜÇLENDİRMELER
-                </button>
                 <button
                   onClick={() => setShowHowTo(true)}
                   className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white py-4 px-2 rounded-2xl font-bold text-sm transition-all hover:scale-105 active:scale-95"
@@ -241,15 +186,9 @@ export default function App() {
               </div>
             </div>
 
-            <div className="mt-6 flex items-center gap-6 text-slate-500 text-sm">
-              <div className="flex items-center gap-2">
-                <Trophy size={16} className="text-yellow-500" />
-                <span className="font-bold tracking-wider">SKOR: {highScore}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Coins size={16} className="text-yellow-400" />
-                <span className="font-bold tracking-wider text-yellow-400">{coins}</span>
-              </div>
+            <div className="mt-6 flex items-center gap-2 text-slate-500 text-sm">
+              <Trophy size={16} className="text-yellow-500" />
+              <span className="font-bold tracking-wider">EN YÜKSEK SKOR: {highScore}</span>
             </div>
           </motion.div>
         )}
@@ -290,11 +229,9 @@ export default function App() {
 
             <GameCanvas 
               costume={costume}
-              upgrades={upgrades}
               onGameOver={handleGameOver} 
               onScoreUpdate={setScore}
               onLivesUpdate={setLives}
-              onCoinCollected={handleCoinCollected}
             />
 
             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none w-full px-4 flex justify-center">
@@ -335,7 +272,7 @@ export default function App() {
               <button
                 onClick={() => {
                   setScore(0);
-                  setLives(5 + upgrades.maxLives);
+                  setLives(5);
                   setScreen('PLAYING');
                 }}
                 className="bg-red-600 hover:bg-red-500 text-white py-4 px-8 rounded-2xl font-bold text-lg transition-all hover:scale-105 active:scale-95"
@@ -349,152 +286,6 @@ export default function App() {
                 MENÜYE DÖN
               </button>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Upgrades Modal */}
-      <AnimatePresence>
-        {showUpgrades && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md"
-          >
-            <motion.div
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="bg-slate-900 border border-slate-800 p-6 md:p-8 rounded-3xl max-w-md w-full relative max-h-[90vh] overflow-y-auto"
-            >
-              <button
-                onClick={() => setShowUpgrades(false)}
-                className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors"
-              >
-                <X />
-              </button>
-
-              <div className="flex items-center gap-3 mb-6">
-                <div className="p-2.5 bg-yellow-600 rounded-2xl">
-                  <Zap className="text-white" size={20} />
-                </div>
-                <h3 className="text-xl md:text-2xl font-black uppercase italic tracking-tight">Güçlendirmeler</h3>
-              </div>
-              
-              <div className="flex items-center justify-center gap-2 mb-6 bg-slate-800/50 py-3 rounded-2xl border border-slate-700/50">
-                <Coins className="text-yellow-400" size={24} />
-                <span className="text-2xl font-black text-yellow-400">{coins}</span>
-              </div>
-
-              <div className="space-y-4">
-                {/* Web Strength */}
-                <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50">
-                  <div className="flex justify-between items-start mb-2">
-                    <div>
-                      <h4 className="text-white font-bold flex items-center gap-2">
-                        Ağ Gücü <span className="text-xs bg-slate-700 px-2 py-0.5 rounded-full">Sv. {upgrades.webStrength}</span>
-                      </h4>
-                      <p className="text-slate-400 text-xs mt-1">Ağların seni daha hızlı çeker.</p>
-                    </div>
-                    {upgrades.webStrength < upgradeCosts.webStrength.length ? (
-                      <button
-                        onClick={() => handleUpgrade('webStrength')}
-                        disabled={coins < upgradeCosts.webStrength[upgrades.webStrength]}
-                        className={`flex items-center gap-1 px-3 py-1.5 rounded-xl font-bold text-sm transition-all ${
-                          coins >= upgradeCosts.webStrength[upgrades.webStrength]
-                            ? 'bg-yellow-500 hover:bg-yellow-400 text-slate-900'
-                            : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                        }`}
-                      >
-                        <ArrowUpCircle size={16} />
-                        {upgradeCosts.webStrength[upgrades.webStrength]}
-                      </button>
-                    ) : (
-                      <span className="text-green-400 font-bold text-sm">MAX</span>
-                    )}
-                  </div>
-                  <div className="flex gap-1 mt-3">
-                    {[...Array(5)].map((_, i) => (
-                      <div key={i} className={`h-1.5 flex-1 rounded-full ${i < upgrades.webStrength ? 'bg-yellow-500' : 'bg-slate-700'}`} />
-                    ))}
-                  </div>
-                </div>
-
-                {/* Slingshot Boost */}
-                <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50">
-                  <div className="flex justify-between items-start mb-2">
-                    <div>
-                      <h4 className="text-white font-bold flex items-center gap-2">
-                        Sapan Etkisi <span className="text-xs bg-slate-700 px-2 py-0.5 rounded-full">Sv. {upgrades.slingshotBoost}</span>
-                      </h4>
-                      <p className="text-slate-400 text-xs mt-1">İkili ağı bıraktığında daha fazla hızlanırsın.</p>
-                    </div>
-                    {upgrades.slingshotBoost < upgradeCosts.slingshotBoost.length ? (
-                      <button
-                        onClick={() => handleUpgrade('slingshotBoost')}
-                        disabled={coins < upgradeCosts.slingshotBoost[upgrades.slingshotBoost]}
-                        className={`flex items-center gap-1 px-3 py-1.5 rounded-xl font-bold text-sm transition-all ${
-                          coins >= upgradeCosts.slingshotBoost[upgrades.slingshotBoost]
-                            ? 'bg-yellow-500 hover:bg-yellow-400 text-slate-900'
-                            : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                        }`}
-                      >
-                        <ArrowUpCircle size={16} />
-                        {upgradeCosts.slingshotBoost[upgrades.slingshotBoost]}
-                      </button>
-                    ) : (
-                      <span className="text-green-400 font-bold text-sm">MAX</span>
-                    )}
-                  </div>
-                  <div className="flex gap-1 mt-3">
-                    {[...Array(5)].map((_, i) => (
-                      <div key={i} className={`h-1.5 flex-1 rounded-full ${i < upgrades.slingshotBoost ? 'bg-yellow-500' : 'bg-slate-700'}`} />
-                    ))}
-                  </div>
-                </div>
-
-                {/* Max Lives */}
-                <div className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700/50">
-                  <div className="flex justify-between items-start mb-2">
-                    <div>
-                      <h4 className="text-white font-bold flex items-center gap-2">
-                        Ekstra Can <span className="text-xs bg-slate-700 px-2 py-0.5 rounded-full">Sv. {upgrades.maxLives}</span>
-                      </h4>
-                      <p className="text-slate-400 text-xs mt-1">Oyuna daha fazla can ile başlarsın.</p>
-                    </div>
-                    {upgrades.maxLives < upgradeCosts.maxLives.length ? (
-                      <button
-                        onClick={() => handleUpgrade('maxLives')}
-                        disabled={coins < upgradeCosts.maxLives[upgrades.maxLives]}
-                        className={`flex items-center gap-1 px-3 py-1.5 rounded-xl font-bold text-sm transition-all ${
-                          coins >= upgradeCosts.maxLives[upgrades.maxLives]
-                            ? 'bg-yellow-500 hover:bg-yellow-400 text-slate-900'
-                            : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                        }`}
-                      >
-                        <ArrowUpCircle size={16} />
-                        {upgradeCosts.maxLives[upgrades.maxLives]}
-                      </button>
-                    ) : (
-                      <span className="text-green-400 font-bold text-sm">MAX</span>
-                    )}
-                  </div>
-                  <div className="flex gap-1 mt-3">
-                    {[...Array(3)].map((_, i) => (
-                      <div key={i} className={`h-1.5 flex-1 rounded-full ${i < upgrades.maxLives ? 'bg-yellow-500' : 'bg-slate-700'}`} />
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setShowUpgrades(false)}
-                className="w-full mt-8 bg-yellow-600 hover:bg-yellow-500 text-white py-3.5 rounded-xl font-bold text-lg transition-all"
-              >
-                KAPAT
-              </button>
-            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

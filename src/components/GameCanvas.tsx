@@ -1,23 +1,21 @@
 import React, { useEffect, useRef } from 'react';
-import { GameState, Building, Point, CostumeId, Web, Obstacle, Coin, Upgrades } from '../types';
+import { GameState, Building, Point, CostumeId, Web, Obstacle } from '../types';
 
 const GRAVITY = 0.5;
 const AIR_FRICTION = 0.998;
-const BASE_RETRACT_SPEED = 5; // Base retract speed
-const BASE_DUAL_RETRACT_MULTIPLIER = 3.5; // Stronger pull when both webs are active
+const RETRACT_SPEED = 5; // Base retract speed
+const DUAL_RETRACT_MULTIPLIER = 3.5; // Stronger pull when both webs are active
 const BUILDING_SPACING = 300;
 const ABYSS_Y = 2000;
 
 interface GameCanvasProps {
   costume: CostumeId;
-  upgrades: Upgrades;
   onGameOver: (score: number) => void;
   onScoreUpdate: (score: number) => void;
   onLivesUpdate: (lives: number) => void;
-  onCoinCollected: () => void;
 }
 
-export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, upgrades, onGameOver, onScoreUpdate, onLivesUpdate, onCoinCollected }) => {
+export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onScoreUpdate, onLivesUpdate }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(null);
@@ -36,9 +34,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, upgrades, onGam
     },
     buildings: [],
     obstacles: [],
-    coins: [],
     score: 0,
-    lives: 5 + upgrades.maxLives,
+    lives: 5,
     cameraX: -200,
     cameraY: ABYSS_Y - 600,
     pointer: { x: 500, y: 300 },
@@ -61,37 +58,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, upgrades, onGam
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Initialize buildings, obstacles, and coins
+  // Initialize buildings and obstacles
   useEffect(() => {
     const initialBuildings: Building[] = [];
     const initialObstacles: Obstacle[] = [];
-    const initialCoins: Coin[] = [];
     for (let i = -1; i < 10; i++) {
       const bX = i * BUILDING_SPACING;
       initialBuildings.push(generateBuilding(bX));
-      if (i > 0) {
-        if (Math.random() > 0.3) {
-          initialObstacles.push(generateObstacle(bX + BUILDING_SPACING / 2));
-        }
-        if (Math.random() > 0.4) {
-          initialCoins.push(generateCoin(bX + BUILDING_SPACING / 2 + (Math.random() * 100 - 50)));
-        }
+      if (i > 0 && Math.random() > 0.3) {
+        initialObstacles.push(generateObstacle(bX + BUILDING_SPACING / 2));
       }
     }
     stateRef.current.buildings = initialBuildings;
     stateRef.current.obstacles = initialObstacles;
-    stateRef.current.coins = initialCoins;
   }, []);
-
-  const generateCoin = (x: number): Coin => {
-    return {
-      x,
-      y: ABYSS_Y - 300 - Math.random() * 500, // Random height in the air
-      radius: 12,
-      collected: false,
-      offsetY: Math.random() * Math.PI * 2,
-    };
-  };
 
   const generateObstacle = (x: number): Obstacle => {
     return {
@@ -221,9 +201,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, upgrades, onGam
     if (wasDual && !nowDual && !state.player.leftWeb.active && !state.player.rightWeb.active) {
       const speed = Math.hypot(state.player.vx, state.player.vy);
       if (speed > 15) {
-        const boostMultiplier = 1.2 + (upgrades.slingshotBoost * 0.05);
-        state.player.vx *= boostMultiplier;
-        state.player.vy *= (1.0 + (upgrades.slingshotBoost * 0.05));
+        state.player.vx *= 1.2;
+        state.player.vy *= 1.1;
       }
     }
   };
@@ -281,9 +260,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, upgrades, onGam
     if (wasDual && !nowDual && !state.player.leftWeb.active && !state.player.rightWeb.active) {
       const speed = Math.hypot(state.player.vx, state.player.vy);
       if (speed > 15) {
-        const boostMultiplier = 1.2 + (upgrades.slingshotBoost * 0.05);
-        state.player.vx *= boostMultiplier;
-        state.player.vy *= (1.0 + (upgrades.slingshotBoost * 0.05));
+        state.player.vx *= 1.2;
+        state.player.vy *= 1.1;
       }
     }
   };
