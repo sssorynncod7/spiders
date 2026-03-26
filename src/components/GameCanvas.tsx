@@ -65,8 +65,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     for (let i = -1; i < 10; i++) {
       const bX = i * BUILDING_SPACING;
       initialBuildings.push(generateBuilding(bX));
-      if (i > 0 && Math.random() > 0.3) {
-        initialObstacles.push(generateObstacle(bX + BUILDING_SPACING / 2));
+      if (i > 0) {
+        if (Math.random() > 0.1) {
+          initialObstacles.push(generateObstacle(bX + BUILDING_SPACING / 2));
+        }
+        if (Math.random() > 0.4) {
+          initialObstacles.push(generateObstacle(bX + BUILDING_SPACING / 2 + (Math.random() * 150 - 75)));
+        }
       }
     }
     stateRef.current.buildings = initialBuildings;
@@ -76,7 +81,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   const generateObstacle = (x: number): Obstacle => {
     return {
       x,
-      y: ABYSS_Y - 400 - Math.random() * 600, // Random height in the air
+      y: ABYSS_Y - 200 - Math.random() * 600, // Lower down
       radius: 20,
       type: Math.random() > 0.5 ? 'drone' : 'mine',
       offsetY: Math.random() * Math.PI * 2, // Random starting phase for floating
@@ -140,31 +145,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     let bestAnchor: Point | null = null;
 
     for (const b of state.buildings) {
-      if (worldX >= b.x && worldX <= b.x + b.width) {
-        if (worldY >= b.y) {
-          bestAnchor = { x: worldX, y: worldY };
-        } else {
-          bestAnchor = { x: worldX, y: b.y };
-        }
+      if (worldX >= b.x && worldX <= b.x + b.width && worldY >= b.y) {
+        bestAnchor = { x: worldX, y: worldY };
         break;
       }
-    }
-
-    if (!bestAnchor) {
-      let minDistance = Infinity;
-      state.buildings.forEach(b => {
-        const corners = [
-          { x: b.x, y: b.y },
-          { x: b.x + b.width, y: b.y }
-        ];
-        corners.forEach(c => {
-          const dist = Math.hypot(c.x - worldX, c.y - worldY);
-          if (dist < minDistance && c.x > state.player.x - 300) {
-            minDistance = dist;
-            bestAnchor = c;
-          }
-        });
-      });
     }
 
     if (bestAnchor) {
@@ -337,8 +321,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     if (lastBuilding.x - state.cameraX < canvasWidth + 500) {
       const nextX = lastBuilding.x + BUILDING_SPACING + Math.random() * 200;
       state.buildings.push(generateBuilding(nextX));
-      if (Math.random() > 0.3) {
+      if (Math.random() > 0.1) {
         state.obstacles.push(generateObstacle(nextX - BUILDING_SPACING / 2));
+      }
+      if (Math.random() > 0.4) {
+        state.obstacles.push(generateObstacle(nextX - BUILDING_SPACING / 2 + (Math.random() * 150 - 75)));
       }
     }
 
