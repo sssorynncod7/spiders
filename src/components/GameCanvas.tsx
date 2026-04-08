@@ -13,6 +13,8 @@ const FIXED_TIMESTEP = 1 / 120;
 const MAX_FRAME_DELTA = 1 / 30;
 const BUILDING_SPACING = 300;
 const ABYSS_Y = 2000;
+const GROUND_Y = ABYSS_Y - 40;
+const GROUND_BOUNCE_DAMPING = 0.25;
 
 interface GameCanvasProps {
   costume: CostumeId;
@@ -359,10 +361,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       onScoreUpdate(state.score);
     }
 
-    // Game over conditions
-    if (player.y > state.cameraY + canvasHeight + 50) {
-      state.isGameOver = true;
-      onGameOver(state.score);
+    // Ground collision: prevent falling out of the map
+    const playerBottom = player.y + player.radius;
+    if (playerBottom > GROUND_Y) {
+      player.y = GROUND_Y - player.radius;
+      if (player.vy > 0) {
+        player.vy *= -GROUND_BOUNCE_DAMPING;
+      }
     }
   };
 
@@ -407,6 +412,57 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
     ctx.save();
     ctx.translate(-state.cameraX, -state.cameraY);
+
+    // Draw themed ground (city street with spider-web motif)
+    const groundLeft = state.cameraX - 200;
+    const groundWidth = canvasWidth + 400;
+    const groundHeight = 280;
+
+    const groundGradient = ctx.createLinearGradient(0, GROUND_Y - groundHeight, 0, GROUND_Y + 30);
+    groundGradient.addColorStop(0, '#0f172a');
+    groundGradient.addColorStop(1, '#020617');
+    ctx.fillStyle = groundGradient;
+    ctx.fillRect(groundLeft, GROUND_Y - groundHeight, groundWidth, groundHeight + 60);
+
+    // Asphalt lanes
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.fillRect(groundLeft, GROUND_Y - 110, groundWidth, 70);
+
+    // Lane markings
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.45)';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([18, 18]);
+    ctx.beginPath();
+    ctx.moveTo(groundLeft, GROUND_Y - 74);
+    ctx.lineTo(groundLeft + groundWidth, GROUND_Y - 74);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Spider-web arcs on the ground to match game theme
+    const webCenterY = GROUND_Y - 18;
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.2)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 7; i++) {
+      const radius = 45 + i * 24;
+      ctx.beginPath();
+      ctx.arc(state.cameraX + canvasWidth * 0.5, webCenterY, radius, Math.PI, Math.PI * 2);
+      ctx.stroke();
+    }
+    for (let i = -5; i <= 5; i++) {
+      const x = state.cameraX + canvasWidth * 0.5 + i * 30;
+      ctx.beginPath();
+      ctx.moveTo(state.cameraX + canvasWidth * 0.5, webCenterY);
+      ctx.lineTo(x, GROUND_Y + 10);
+      ctx.stroke();
+    }
+
+    // Glowing top line of the ground
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(groundLeft, GROUND_Y - 110);
+    ctx.lineTo(groundLeft + groundWidth, GROUND_Y - 110);
+    ctx.stroke();
 
     // Draw Buildings (Foreground)
     state.buildings.forEach(b => {
