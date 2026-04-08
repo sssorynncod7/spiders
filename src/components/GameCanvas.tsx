@@ -1,10 +1,16 @@
 import React, { useEffect, useRef } from 'react';
 import { GameState, Building, Point, CostumeId, Web, Obstacle } from '../types';
 
-const GRAVITY = 0.25;
-const AIR_FRICTION = 0.995;
-const RETRACT_SPEED = 2.5; // Base retract speed
-const DUAL_RETRACT_MULTIPLIER = 3.5; // Stronger pull when both webs are active
+const PIXELS_PER_METER = 35;
+const GRAVITY = 9.81 * PIXELS_PER_METER;
+const AIR_DRAG_PER_SECOND = 0.22;
+const WEB_STIFFNESS = 65;
+const WEB_DAMPING = 12;
+const RETRACT_SPEED = 11 * PIXELS_PER_METER;
+const DUAL_RETRACT_MULTIPLIER = 1.2;
+const MIN_WEB_LENGTH = 75;
+const FIXED_TIMESTEP = 1 / 120;
+const MAX_FRAME_DELTA = 1 / 30;
 const BUILDING_SPACING = 300;
 const ABYSS_Y = 2000;
 
@@ -18,14 +24,16 @@ interface GameCanvasProps {
 export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onScoreUpdate, onLivesUpdate }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const requestRef = useRef<number>(null);
+  const requestRef = useRef<number | null>(null);
+  const previousTimeRef = useRef<number | null>(null);
+  const accumulatorRef = useRef(0);
   const lastTouchTimeRef = useRef<number>(0);
   const stateRef = useRef<GameState>({
     player: {
       x: 0,
       y: ABYSS_Y - 600,
-      vx: 12,
-      vy: -8,
+      vx: 420,
+      vy: -120,
       radius: 15,
       rotation: 0,
       leftWeb: { active: false, anchor: null, restLength: 0 },
@@ -173,22 +181,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   const handleMouseUp = (e: React.MouseEvent) => {
     if (Date.now() - lastTouchTimeRef.current < 500) return;
     const state = stateRef.current;
-    const wasDual = state.player.leftWeb.active && state.player.rightWeb.active;
-    
     const isRightClick = e.button === 2;
     const web = isRightClick ? state.player.rightWeb : state.player.leftWeb;
     web.active = false;
     web.anchor = null;
-
-    // Slingshot effect for mouse too
-    const nowDual = state.player.leftWeb.active && state.player.rightWeb.active;
-    if (wasDual && !nowDual && !state.player.leftWeb.active && !state.player.rightWeb.active) {
-      const speed = Math.hypot(state.player.vx, state.player.vy);
-      if (speed > 8) {
-        state.player.vx *= 1.15;
-        state.player.vy *= 1.1;
-      }
-    }
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -219,9 +215,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (e.cancelable) e.preventDefault();
     const state = stateRef.current;
-    
-    const wasDual = state.player.leftWeb.active && state.player.rightWeb.active;
-    
+
     let hasLeft = false;
     let hasRight = false;
     
@@ -238,19 +232,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       state.player.rightWeb.active = false;
       state.player.rightWeb.anchor = null;
     }
-
-    // Slingshot effect: if releasing both while moving fast, give a boost
-    const nowDual = state.player.leftWeb.active && state.player.rightWeb.active;
-    if (wasDual && !nowDual && !state.player.leftWeb.active && !state.player.rightWeb.active) {
-      const speed = Math.hypot(state.player.vx, state.player.vy);
-      if (speed > 8) {
-        state.player.vx *= 1.15;
-        state.player.vy *= 1.1;
-      }
-    }
   };
 
-  const update = () => {
+  const update = (dt: number) => {
     const state = stateRef.current;
     if (state.isGameOver) return;
     
@@ -260,8 +244,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
     const player = state.player;
 
-    // Apply Gravity
-    player.vy += GRAVITY;
+    // Apply gravity
+    player.vy += GRAVITY * dt;
 
     const bothActive = player.leftWeb.active && player.rightWeb.active;
     const currentRetractSpeed = bothActive ? RETRACT_SPEED * DUAL_RETRACT_MULTIPLIER : RETRACT_SPEED;
@@ -272,23 +256,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       const dy = web.anchor.y - player.y;
       const distance = Math.hypot(dx, dy);
 
-      if (web.restLength > 80) {
-        web.restLength -= currentRetractSpeed;
-      }
+      web.restLength = Math.max(MIN_WEB_LENGTH, web.restLength - currentRetractSpeed * dt);
 
       if (distance > web.restLength) {
-        const diff = distance - web.restLength;
+        const stretch = distance - web.restLength;
         const nx = dx / distance;
         const ny = dy / distance;
 
-        player.x += nx * diff;
-        player.y += ny * diff;
-
-        const dot = player.vx * nx + player.vy * ny;
-        if (dot < 0) {
-          player.vx -= dot * nx;
-          player.vy -= dot * ny;
+        const radialVelocity = player.vx * nx + player.vy * ny;
+        const tensionAcceleration = stretch * WEB_STIFFNESS - radialVelocity * WEB_DAMPING;
+        if (tensionAcceleration > 0) {
+          player.vx += nx * tensionAcceleration * dt;
+          player.vy += ny * tensionAcceleration * dt;
         }
+
+        const correction = stretch * 0.22;
+        player.x += nx * correction;
+        player.y += ny * correction;
       }
     };
 
@@ -298,13 +282,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       applyWeb(player.rightWeb);
     }
 
-    // Apply Air Friction
-    player.vx *= AIR_FRICTION;
-    player.vy *= AIR_FRICTION;
+    const drag = Math.exp(-AIR_DRAG_PER_SECOND * dt);
+    player.vx *= drag;
+    player.vy *= drag;
 
     // Update Position
-    player.x += player.vx;
-    player.y += player.vy;
+    player.x += player.vx * dt;
+    player.y += player.vy * dt;
 
     // Smooth Camera Follow
     const targetCamX = player.x - canvasWidth * 0.35;
@@ -353,7 +337,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
           
           // Bounce back
           player.vx *= -0.5;
-          player.vy = -6;
+          player.vy = -220;
           
           // Break webs
           player.leftWeb.active = false;
@@ -467,13 +451,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
     // Draw Wind Lines (Speed effect)
     const speed = Math.hypot(state.player.vx, state.player.vy);
-    if (speed > 20) {
-      ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(0.3, (speed - 20) / 100)})`;
+    const visualSpeed = speed / 60;
+    if (visualSpeed > 20) {
+      ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(0.3, (visualSpeed - 20) / 100)})`;
       ctx.lineWidth = 1;
       for (let i = 0; i < 15; i++) {
         const x = (Math.random() * canvasWidth);
         const y = (Math.random() * canvasHeight);
-        const len = speed * 2;
+        const len = visualSpeed * 2;
         ctx.beginPath();
         ctx.moveTo(x, y);
         ctx.lineTo(x - (state.player.vx / speed) * len, y - (state.player.vy / speed) * len);
@@ -573,11 +558,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     }
     
     // Motion Blur (Trail)
-    if (speed > 15) {
+    if (visualSpeed > 15) {
       ctx.globalAlpha = 0.3;
       for (let i = 1; i < 4; i++) {
         ctx.save();
-        ctx.translate(p.x - p.vx * i * 0.5, p.y - p.vy * i * 0.5);
+        ctx.translate(p.x - (p.vx / 60) * i * 0.5, p.y - (p.vy / 60) * i * 0.5);
         ctx.rotate(velocityAngle);
         ctx.fillStyle = colors.primary;
         ctx.beginPath();
@@ -704,17 +689,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.fillRect(barX, barY, barWidth, barHeight);
     
-    const speedFill = Math.min(1, speed / 60);
-    const speedColor = speed > 40 ? '#ef4444' : speed > 20 ? '#eab308' : '#22c55e';
+    const speedFill = Math.min(1, visualSpeed / 60);
+    const speedColor = visualSpeed > 40 ? '#ef4444' : visualSpeed > 20 ? '#eab308' : '#22c55e';
     ctx.fillStyle = speedColor;
     ctx.fillRect(barX, barY, barWidth * speedFill, barHeight);
   };
 
-  const loop = () => {
+  const loop = (time: number) => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
+
+    if (previousTimeRef.current === null) {
+      previousTimeRef.current = time;
+    }
+
+    const rawDelta = (time - previousTimeRef.current) / 1000;
+    previousTimeRef.current = time;
+    accumulatorRef.current += Math.min(rawDelta, MAX_FRAME_DELTA);
+
+    while (accumulatorRef.current >= FIXED_TIMESTEP) {
+      update(FIXED_TIMESTEP);
+      accumulatorRef.current -= FIXED_TIMESTEP;
+    }
+
     if (ctx) {
-      update();
       draw(ctx);
     }
     requestRef.current = requestAnimationFrame(loop);
@@ -723,7 +721,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   useEffect(() => {
     requestRef.current = requestAnimationFrame(loop);
     return () => {
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      if (requestRef.current !== null) cancelAnimationFrame(requestRef.current);
     };
   }, []);
 
@@ -745,4 +743,3 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     </div>
   );
 };
-
