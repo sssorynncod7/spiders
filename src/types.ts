@@ -21,12 +21,23 @@ export interface Building {
   windows: Point[];
 }
 
-export interface Obstacle {
+export interface Enemy {
   x: number;
+  spawnX: number;
   y: number;
   radius: number;
-  type: 'drone' | 'mine';
-  offsetY: number; // For floating animation
+  type: 'goblin' | 'lizard' | 'rhino';
+  vx: number;
+  hp: number;
+  direction: 1 | -1;
+}
+
+export interface WebShot {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
 }
 
 export type CostumeId = 'classic' | 'symbiote' | 'miles' | 'gwen' | 'iron' | '2099' | 'noir';
@@ -44,7 +55,8 @@ export interface GameState {
     invulnerableUntil: number;
   };
   buildings: Building[];
-  obstacles: Obstacle[];
+  enemies: Enemy[];
+  webShots: WebShot[];
   score: number;
   lives: number;
   cameraX: number;

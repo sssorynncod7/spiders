@@ -238,7 +238,7 @@ export default function App() {
               <div className="bg-black/60 backdrop-blur-md px-4 py-2.5 rounded-full border border-white/10 flex items-center gap-2 max-w-full">
                 <MousePointer2 size={14} className="text-red-500 flex-shrink-0" />
                 <span className="text-[10px] sm:text-xs font-bold text-white/80 uppercase tracking-tight text-center">
-                  Sol Ekran: Sol Ağ | Sağ Ekran: Sağ Ağ
+                  Sol/Sağ Tık: Salın | SPACE: Ağ Atışı | A-D/←-→: Yürü
                 </span>
               </div>
             </div>
