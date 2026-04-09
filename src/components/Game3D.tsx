@@ -10,15 +10,20 @@ interface Game3DProps {
   onScoreUpdate?: (score: number) => void;
 }
 
-const GRAVITY = new THREE.Vector3(0, -90, 0);
-const RETRACT_SPEED = 60;
-const FORWARD_FORCE = 40;
-const MAX_VELOCITY = 150;
-const AIR_DRAG = 0.08;
-const SWING_DRAG = 0.02;
-const WEB_SPRING_STRENGTH = 38;
-const WEB_DAMPING = 6;
-const DUAL_WEB_BOOST = 0.9;
+const GRAVITY = new THREE.Vector3(0, -85, 0);
+const RETRACT_SPEED = 80;
+const FORWARD_FORCE = 36;
+const MAX_VELOCITY = 180;
+const AIR_DRAG = 0.035;
+const LINEAR_DAMPING = 0.12;
+const CONSTRAINT_DAMPING = 0.08;
+const CONSTRAINT_STIFFNESS = 0.6;
+const WEB_MIN_LENGTH = 32;
+const WEB_MAX_LENGTH = 420;
+const WEB_ATTACH_BOOST = 1.08;
+const DUAL_WEB_STABILITY = 0.92;
+const PHYSICS_SUBSTEP = 1 / 120;
+const MAX_FRAME_TIME = 0.05;
 const BUILDING_SPACING = 80;
 const BUILDING_WIDTH = 40;
 
@@ -68,7 +73,8 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
     leftWeb: { active: false, anchor: new THREE.Vector3(), restLength: 0 },
     rightWeb: { active: false, anchor: new THREE.Vector3(), restLength: 0 },
     score: 0,
-    isGameOver: false
+    isGameOver: false,
+    accumulator: 0
   });
 
   const colors = useMemo(() => getCostumeColors(costume), [costume]);
@@ -102,8 +108,13 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
       const anchorX = bestBuilding.position.x + (isLeft ? bestBuilding.size.x/2 : -bestBuilding.size.x/2);
       web.anchor.set(anchorX, bestBuilding.size.y, bestBuilding.position.z);
       const initialLength = state.current.pos.distanceTo(web.anchor);
-      // Start with a slightly shorter line so each grab gives an immediate "catch" feel.
-      web.restLength = Math.max(45, initialLength * 0.9);
+      web.restLength = THREE.MathUtils.clamp(initialLength * 0.88, WEB_MIN_LENGTH, WEB_MAX_LENGTH);
+
+      // Preserve existing momentum and add a small catch boost toward the new anchor.
+      const toAnchor = new THREE.Vector3().subVectors(web.anchor, state.current.pos).normalize();
+      const tangentVelocity = state.current.vel.clone().projectOnPlane(toAnchor);
+      const incomingSpeed = Math.max(0, state.current.vel.dot(toAnchor));
+      state.current.vel.copy(tangentVelocity.addScaledVector(toAnchor, incomingSpeed * WEB_ATTACH_BOOST));
     }
   };
 
@@ -127,72 +138,73 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
     const s = state.current;
     if (s.isGameOver) return;
 
-    const dt = Math.min(delta, 0.05);
+    const frameDt = Math.min(delta, MAX_FRAME_TIME);
+    s.accumulator = Math.min(s.accumulator + frameDt, 0.2);
 
-    // Gravity
-    s.vel.addScaledVector(GRAVITY, dt);
-
-    // Forward propulsion to keep the game moving
-    s.vel.z -= FORWARD_FORCE * dt;
-
-    // Baseline air drag to reduce runaway speed changes.
-    const dragFactor = Math.max(0, 1 - AIR_DRAG * dt);
-    s.vel.multiplyScalar(dragFactor);
-
-    const applyWeb = (web: typeof s.leftWeb) => {
+    const solveWebConstraint = (web: typeof s.leftWeb, dt: number) => {
       if (!web.active) return;
-      const diff = new THREE.Vector3().subVectors(web.anchor, s.pos);
-      const distance = diff.length();
+
+      web.restLength = Math.max(WEB_MIN_LENGTH, web.restLength - RETRACT_SPEED * dt);
+      const rope = new THREE.Vector3().subVectors(s.pos, web.anchor);
+      const distance = rope.length();
       if (distance < 0.0001) return;
-      const dir = diff.clone().normalize();
-      const velocityAlongRope = s.vel.dot(dir);
-      
-      // Retract web
-      if (web.restLength > 50) {
-        web.restLength -= RETRACT_SPEED * dt;
+
+      if (distance <= web.restLength) return;
+
+      const dir = rope.multiplyScalar(1 / distance);
+      const excess = distance - web.restLength;
+
+      // Position based correction keeps the rope numerically stable at high speed.
+      s.pos.addScaledVector(dir, -excess * CONSTRAINT_STIFFNESS);
+
+      // Remove outward radial velocity while keeping tangential motion.
+      const radialSpeed = s.vel.dot(dir);
+      if (radialSpeed > 0) {
+        s.vel.addScaledVector(dir, -radialSpeed * (1 + CONSTRAINT_DAMPING));
       }
-
-      // Spring-like rope force with damping for smoother and more controllable swings.
-      if (distance > web.restLength) {
-        const stretch = distance - web.restLength;
-        const springAccel = stretch * WEB_SPRING_STRENGTH - velocityAlongRope * WEB_DAMPING;
-        s.vel.addScaledVector(dir, springAccel * dt);
-
-        // Soft positional correction to keep the rope constraint stable at high speed.
-        s.pos.addScaledVector(dir, stretch * 0.25);
-      }
-
-      // Rope friction to damp chaotic oscillations without killing momentum completely.
-      s.vel.addScaledVector(dir, -velocityAlongRope * SWING_DRAG);
     };
 
-    applyWeb(s.leftWeb);
-    applyWeb(s.rightWeb);
+    while (s.accumulator >= PHYSICS_SUBSTEP) {
+      const dt = PHYSICS_SUBSTEP;
+      s.accumulator -= dt;
 
-    const activeWebCount = Number(s.leftWeb.active) + Number(s.rightWeb.active);
-    if (activeWebCount === 2) {
-      // Two attached webs should feel tighter and more controlled.
-      s.vel.y *= DUAL_WEB_BOOST;
+      s.vel.addScaledVector(GRAVITY, dt);
+      s.vel.z -= FORWARD_FORCE * dt;
+
+      const air = Math.exp(-AIR_DRAG * dt);
+      const linear = Math.exp(-LINEAR_DAMPING * dt);
+      s.vel.multiplyScalar(air * linear);
+
+      s.pos.addScaledVector(s.vel, dt);
+
+      // Multiple iterations avoid post-shot instability and rope stretch jitter.
+      for (let i = 0; i < 3; i++) {
+        solveWebConstraint(s.leftWeb, dt);
+        solveWebConstraint(s.rightWeb, dt);
+      }
+
+      const activeWebCount = Number(s.leftWeb.active) + Number(s.rightWeb.active);
+      if (activeWebCount === 2) {
+        s.vel.y *= DUAL_WEB_STABILITY;
+      }
+
+      if (s.vel.length() > MAX_VELOCITY) {
+        s.vel.setLength(MAX_VELOCITY);
+      }
     }
-
-    // Speed limit
-    if (s.vel.length() > MAX_VELOCITY) {
-      s.vel.setLength(MAX_VELOCITY);
-    }
-
-    // Apply velocity
-    s.pos.addScaledVector(s.vel, dt);
 
     // Update player mesh
     if (playerRef.current) {
       playerRef.current.position.copy(s.pos);
       
       // Smooth rotation towards velocity
-      const targetRotation = new THREE.Quaternion().setFromUnitVectors(
-        new THREE.Vector3(0, 0, -1),
-        s.vel.clone().normalize()
-      );
-      playerRef.current.quaternion.slerp(targetRotation, 0.1);
+      if (s.vel.lengthSq() > 0.0001) {
+        const targetRotation = new THREE.Quaternion().setFromUnitVectors(
+          new THREE.Vector3(0, 0, -1),
+          s.vel.clone().normalize()
+        );
+        playerRef.current.quaternion.slerp(targetRotation, 0.1);
+      }
     }
 
     // Update camera (follow player smoothly)
