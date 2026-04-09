@@ -14,6 +14,11 @@ const GRAVITY = new THREE.Vector3(0, -90, 0);
 const RETRACT_SPEED = 60;
 const FORWARD_FORCE = 40;
 const MAX_VELOCITY = 150;
+const AIR_DRAG = 0.08;
+const SWING_DRAG = 0.02;
+const WEB_SPRING_STRENGTH = 38;
+const WEB_DAMPING = 6;
+const DUAL_WEB_BOOST = 0.9;
 const BUILDING_SPACING = 80;
 const BUILDING_WIDTH = 40;
 
@@ -96,7 +101,9 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
       // Anchor to the top inner corner of the building
       const anchorX = bestBuilding.position.x + (isLeft ? bestBuilding.size.x/2 : -bestBuilding.size.x/2);
       web.anchor.set(anchorX, bestBuilding.size.y, bestBuilding.position.z);
-      web.restLength = state.current.pos.distanceTo(web.anchor);
+      const initialLength = state.current.pos.distanceTo(web.anchor);
+      // Start with a slightly shorter line so each grab gives an immediate "catch" feel.
+      web.restLength = Math.max(45, initialLength * 0.9);
     }
   };
 
@@ -128,34 +135,45 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
     // Forward propulsion to keep the game moving
     s.vel.z -= FORWARD_FORCE * dt;
 
+    // Baseline air drag to reduce runaway speed changes.
+    const dragFactor = Math.max(0, 1 - AIR_DRAG * dt);
+    s.vel.multiplyScalar(dragFactor);
+
     const applyWeb = (web: typeof s.leftWeb) => {
       if (!web.active) return;
       const diff = new THREE.Vector3().subVectors(web.anchor, s.pos);
       const distance = diff.length();
+      if (distance < 0.0001) return;
+      const dir = diff.clone().normalize();
+      const velocityAlongRope = s.vel.dot(dir);
       
       // Retract web
       if (web.restLength > 50) {
         web.restLength -= RETRACT_SPEED * dt;
       }
 
-      // Pendulum constraint
+      // Spring-like rope force with damping for smoother and more controllable swings.
       if (distance > web.restLength) {
-        const excess = distance - web.restLength;
-        const dir = diff.normalize();
-        
-        // Pull player back to rest length
-        s.pos.addScaledVector(dir, excess);
-        
-        // Remove velocity along the web string (inelastic collision)
-        const dot = s.vel.dot(dir);
-        if (dot < 0) {
-          s.vel.addScaledVector(dir, -dot);
-        }
+        const stretch = distance - web.restLength;
+        const springAccel = stretch * WEB_SPRING_STRENGTH - velocityAlongRope * WEB_DAMPING;
+        s.vel.addScaledVector(dir, springAccel * dt);
+
+        // Soft positional correction to keep the rope constraint stable at high speed.
+        s.pos.addScaledVector(dir, stretch * 0.25);
       }
+
+      // Rope friction to damp chaotic oscillations without killing momentum completely.
+      s.vel.addScaledVector(dir, -velocityAlongRope * SWING_DRAG);
     };
 
     applyWeb(s.leftWeb);
     applyWeb(s.rightWeb);
+
+    const activeWebCount = Number(s.leftWeb.active) + Number(s.rightWeb.active);
+    if (activeWebCount === 2) {
+      // Two attached webs should feel tighter and more controlled.
+      s.vel.y *= DUAL_WEB_BOOST;
+    }
 
     // Speed limit
     if (s.vel.length() > MAX_VELOCITY) {
