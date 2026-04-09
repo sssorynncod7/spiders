@@ -6,6 +6,10 @@ export interface Point {
 export interface Web {
   active: boolean;
   anchor: Point | null;
+  targetAnchor: Point | null;
+  tip: Point | null;
+  shooting: boolean;
+  shotTension: number;
   restLength: number;
 }
 
