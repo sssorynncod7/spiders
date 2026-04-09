@@ -24,6 +24,8 @@ const WEB_ATTACH_BOOST = 1.08;
 const DUAL_WEB_STABILITY = 0.92;
 const PHYSICS_SUBSTEP = 1 / 120;
 const MAX_FRAME_TIME = 0.05;
+const GLIDE_DURATION = 0.8;
+const GLIDE_GRAVITY_REDUCTION = 0.35;
 const BUILDING_SPACING = 80;
 const BUILDING_WIDTH = 40;
 
@@ -72,6 +74,8 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
     vel: new THREE.Vector3(0, 0, -80),
     leftWeb: { active: false, anchor: new THREE.Vector3(), restLength: 0 },
     rightWeb: { active: false, anchor: new THREE.Vector3(), restLength: 0 },
+    glideTimer: 0,
+    glideLift: 0,
     score: 0,
     isGameOver: false,
     accumulator: 0
@@ -119,10 +123,32 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
   };
 
   const handlePointerUp = (e: PointerEvent) => {
+    const s = state.current;
     const x = e.clientX;
     const isLeft = x < window.innerWidth / 2;
-    if (isLeft) state.current.leftWeb.active = false;
-    else state.current.rightWeb.active = false;
+    const releasedWeb = isLeft ? s.leftWeb : s.rightWeb;
+    if (!releasedWeb.active) return;
+
+    const ropeDir = new THREE.Vector3().subVectors(s.pos, releasedWeb.anchor).normalize();
+    const tangentVelocity = s.vel.clone().projectOnPlane(ropeDir);
+
+    if (tangentVelocity.lengthSq() > 0.0001) {
+      const tangentDir = tangentVelocity.normalize();
+      const speed = s.vel.length();
+      const upwardFactor = THREE.MathUtils.clamp((tangentDir.y + 0.1) / 1.1, 0, 1);
+      const forwardFactor = THREE.MathUtils.clamp(-tangentDir.z, 0, 1);
+      const diveFactor = THREE.MathUtils.clamp(-tangentDir.y, 0, 1);
+
+      // Release angle controls launch and glide feel.
+      const launchBoost = speed * (0.08 + 0.18 * forwardFactor);
+      s.vel.addScaledVector(tangentDir, launchBoost);
+      s.vel.y += speed * (0.08 * upwardFactor - 0.04 * diveFactor);
+
+      s.glideTimer = GLIDE_DURATION * (0.55 + 0.45 * forwardFactor);
+      s.glideLift = 14 * upwardFactor + 6 * forwardFactor;
+    }
+
+    releasedWeb.active = false;
   };
 
   useEffect(() => {
@@ -168,7 +194,14 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
       const dt = PHYSICS_SUBSTEP;
       s.accumulator -= dt;
 
-      s.vel.addScaledVector(GRAVITY, dt);
+      if (s.glideTimer > 0) {
+        const glideBlend = THREE.MathUtils.clamp(s.glideTimer / GLIDE_DURATION, 0, 1);
+        s.vel.addScaledVector(GRAVITY, dt * (1 - GLIDE_GRAVITY_REDUCTION * glideBlend));
+        s.vel.y += s.glideLift * glideBlend * dt;
+        s.glideTimer = Math.max(0, s.glideTimer - dt);
+      } else {
+        s.vel.addScaledVector(GRAVITY, dt);
+      }
       s.vel.z -= FORWARD_FORCE * dt;
 
       const air = Math.exp(-AIR_DRAG * dt);
