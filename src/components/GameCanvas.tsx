@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { GameState, Building, Point, CostumeId, Web, Enemy, WebShot } from '../types';
+import { GameState, Building, Point, CostumeId, Web, Obstacle } from '../types';
 
 const PIXELS_PER_METER = 35;
 const GRAVITY = 9.81 * PIXELS_PER_METER;
@@ -13,13 +13,6 @@ const FIXED_TIMESTEP = 1 / 120;
 const MAX_FRAME_DELTA = 1 / 30;
 const BUILDING_SPACING = 300;
 const ABYSS_Y = 2000;
-const GROUND_Y = ABYSS_Y - 40;
-const GROUND_BOUNCE_DAMPING = 0.25;
-const GROUND_FRICTION = 0.82;
-const WALK_ACCELERATION = 2200;
-const WALK_MAX_SPEED = 280;
-const WEB_SHOT_SPEED = 1100;
-const WEB_SHOT_LIFETIME = 1.1;
 
 interface GameCanvasProps {
   costume: CostumeId;
@@ -35,7 +28,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   const previousTimeRef = useRef<number | null>(null);
   const accumulatorRef = useRef(0);
   const lastTouchTimeRef = useRef<number>(0);
-  const keysRef = useRef({ left: false, right: false });
   const stateRef = useRef<GameState>({
     player: {
       x: 0,
@@ -49,8 +41,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       invulnerableUntil: 0,
     },
     buildings: [],
-    enemies: [],
-    webShots: [],
+    obstacles: [],
     score: 0,
     lives: 5,
     cameraX: -200,
@@ -75,59 +66,34 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Initialize buildings and enemies
+  // Initialize buildings and obstacles
   useEffect(() => {
     const initialBuildings: Building[] = [];
-    const initialEnemies: Enemy[] = [];
+    const initialObstacles: Obstacle[] = [];
     for (let i = -1; i < 10; i++) {
       const bX = i * BUILDING_SPACING;
       initialBuildings.push(generateBuilding(bX));
       if (i > 0) {
-        initialEnemies.push(generateEnemy(bX + BUILDING_SPACING / 2));
-        if (Math.random() > 0.45) initialEnemies.push(generateEnemy(bX + BUILDING_SPACING / 2 + (Math.random() * 130 - 65)));
+        if (Math.random() > 0.1) {
+          initialObstacles.push(generateObstacle(bX + BUILDING_SPACING / 2));
+        }
+        if (Math.random() > 0.4) {
+          initialObstacles.push(generateObstacle(bX + BUILDING_SPACING / 2 + (Math.random() * 150 - 75)));
+        }
       }
     }
     stateRef.current.buildings = initialBuildings;
-    stateRef.current.enemies = initialEnemies;
+    stateRef.current.obstacles = initialObstacles;
   }, []);
 
-  const generateEnemy = (x: number): Enemy => {
-    const enemyTypes: Enemy['type'][] = ['goblin', 'lizard', 'rhino'];
-    const type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
-    const statsByType: Record<Enemy['type'], { radius: number; hp: number; speed: number }> = {
-      goblin: { radius: 20, hp: 1, speed: 90 },
-      lizard: { radius: 24, hp: 2, speed: 70 },
-      rhino: { radius: 28, hp: 3, speed: 55 },
-    };
-    const stats = statsByType[type];
+  const generateObstacle = (x: number): Obstacle => {
     return {
       x,
-      spawnX: x,
-      y: GROUND_Y - 110 - stats.radius,
-      radius: stats.radius,
-      type,
-      vx: (Math.random() > 0.5 ? 1 : -1) * stats.speed,
-      hp: stats.hp,
-      direction: Math.random() > 0.5 ? 1 : -1,
+      y: ABYSS_Y - 200 - Math.random() * 600, // Lower down
+      radius: 20,
+      type: Math.random() > 0.5 ? 'drone' : 'mine',
+      offsetY: Math.random() * Math.PI * 2, // Random starting phase for floating
     };
-  };
-
-  const shootWeb = () => {
-    const state = stateRef.current;
-    if (state.isGameOver) return;
-    const worldPointerX = state.pointer.x + state.cameraX;
-    const worldPointerY = state.pointer.y + state.cameraY;
-    const dx = worldPointerX - state.player.x;
-    const dy = worldPointerY - state.player.y;
-    const distance = Math.hypot(dx, dy) || 1;
-    const shot: WebShot = {
-      x: state.player.x + (dx / distance) * (state.player.radius + 6),
-      y: state.player.y + (dy / distance) * (state.player.radius + 6),
-      vx: (dx / distance) * WEB_SHOT_SPEED,
-      vy: (dy / distance) * WEB_SHOT_SPEED,
-      life: WEB_SHOT_LIFETIME,
-    };
-    state.webShots.push(shot);
   };
 
   const generateBuilding = (x: number): Building => {
@@ -268,28 +234,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     }
   };
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'ArrowLeft' || e.code === 'KeyA') keysRef.current.left = true;
-      if (e.code === 'ArrowRight' || e.code === 'KeyD') keysRef.current.right = true;
-      if (e.code === 'Space') {
-        e.preventDefault();
-        shootWeb();
-      }
-    };
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'ArrowLeft' || e.code === 'KeyA') keysRef.current.left = false;
-      if (e.code === 'ArrowRight' || e.code === 'KeyD') keysRef.current.right = false;
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, []);
-
   const update = (dt: number) => {
     const state = stateRef.current;
     if (state.isGameOver) return;
@@ -356,77 +300,43 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     const maxCamY = ABYSS_Y - canvasHeight + 200;
     if (state.cameraY > maxCamY) state.cameraY = maxCamY;
 
-    // Generate new buildings and enemies
+    // Generate new buildings and obstacles
     const lastBuilding = state.buildings[state.buildings.length - 1];
     if (lastBuilding.x - state.cameraX < canvasWidth + 500) {
       const nextX = lastBuilding.x + BUILDING_SPACING + Math.random() * 200;
       state.buildings.push(generateBuilding(nextX));
-      state.enemies.push(generateEnemy(nextX - BUILDING_SPACING / 2));
-      if (Math.random() > 0.4) state.enemies.push(generateEnemy(nextX - BUILDING_SPACING / 2 + (Math.random() * 150 - 75)));
+      if (Math.random() > 0.1) {
+        state.obstacles.push(generateObstacle(nextX - BUILDING_SPACING / 2));
+      }
+      if (Math.random() > 0.4) {
+        state.obstacles.push(generateObstacle(nextX - BUILDING_SPACING / 2 + (Math.random() * 150 - 75)));
+      }
     }
 
-    // Remove old buildings and enemies
+    // Remove old buildings and obstacles
     if (state.buildings[0].x - state.cameraX < -1000) {
       state.buildings.shift();
     }
-    if (state.enemies.length > 0 && state.enemies[0].x - state.cameraX < -1000) {
-      state.enemies.shift();
+    if (state.obstacles.length > 0 && state.obstacles[0].x - state.cameraX < -1000) {
+      state.obstacles.shift();
     }
 
-    const onGround = player.y + player.radius >= GROUND_Y - 0.5;
-    if (onGround) {
-      if (keysRef.current.left) player.vx -= WALK_ACCELERATION * dt;
-      if (keysRef.current.right) player.vx += WALK_ACCELERATION * dt;
-      player.vx = Math.max(-WALK_MAX_SPEED, Math.min(WALK_MAX_SPEED, player.vx));
-      if (!keysRef.current.left && !keysRef.current.right) player.vx *= GROUND_FRICTION;
-    }
-
-    // Update web shots
-    for (let i = state.webShots.length - 1; i >= 0; i--) {
-      const shot = state.webShots[i];
-      shot.x += shot.vx * dt;
-      shot.y += shot.vy * dt;
-      shot.life -= dt;
-      if (shot.life <= 0) {
-        state.webShots.splice(i, 1);
-      }
-    }
-
-    // Enemy movement and collisions
+    // Obstacle collision and movement
     const now = Date.now();
-    for (let i = state.enemies.length - 1; i >= 0; i--) {
-      const enemy = state.enemies[i];
-      const walkSpeed = Math.abs(enemy.vx);
-      enemy.x += walkSpeed * enemy.direction * dt;
-
-      // Patrol around spawn area
-      if (enemy.x > enemy.spawnX + 90) enemy.direction = -1;
-      if (enemy.x < enemy.spawnX - 90) enemy.direction = 1;
-
-      for (let j = state.webShots.length - 1; j >= 0; j--) {
-        const shot = state.webShots[j];
-        const distToShot = Math.hypot(enemy.x - shot.x, enemy.y - shot.y);
-        if (distToShot < enemy.radius + 8) {
-          enemy.hp -= 1;
-          state.webShots.splice(j, 1);
-          if (enemy.hp <= 0) {
-            state.enemies.splice(i, 1);
-            state.score += 12;
-            onScoreUpdate(state.score);
-          }
-          break;
-        }
-      }
-
+    for (const obs of state.obstacles) {
+      // Floating animation
+      obs.offsetY += 0.05;
+      
       if (now > player.invulnerableUntil) {
-        const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-        if (dist < player.radius + enemy.radius) {
+        const actualY = obs.y + Math.sin(obs.offsetY) * 20;
+        const dist = Math.hypot(player.x - obs.x, player.y - actualY);
+        if (dist < player.radius + obs.radius) {
           state.lives -= 1;
           onLivesUpdate(state.lives);
           player.invulnerableUntil = now + 1500; // 1.5s invulnerability
           
           // Bounce back
-          player.vx = (player.x < enemy.x ? -1 : 1) * 220;
+          player.vx *= -0.5;
           player.vy = -220;
           
           // Break webs
@@ -437,7 +347,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
             state.isGameOver = true;
             onGameOver(state.score);
           }
-          break; // Only one enemy hit per frame
+          break; // Only hit one obstacle per frame
         }
       }
     }
@@ -449,14 +359,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       onScoreUpdate(state.score);
     }
 
-    // Ground collision: prevent falling out of the map
-    const playerBottom = player.y + player.radius;
-    if (playerBottom > GROUND_Y) {
-      player.y = GROUND_Y - player.radius;
-      if (player.vy > 0) {
-        player.vy *= -GROUND_BOUNCE_DAMPING;
-        if (Math.abs(player.vy) < 25) player.vy = 0;
-      }
+    // Game over conditions
+    if (player.y > state.cameraY + canvasHeight + 50) {
+      state.isGameOver = true;
+      onGameOver(state.score);
     }
   };
 
@@ -501,57 +407,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
     ctx.save();
     ctx.translate(-state.cameraX, -state.cameraY);
-
-    // Draw themed ground (city street with spider-web motif)
-    const groundLeft = state.cameraX - 200;
-    const groundWidth = canvasWidth + 400;
-    const groundHeight = 280;
-
-    const groundGradient = ctx.createLinearGradient(0, GROUND_Y - groundHeight, 0, GROUND_Y + 30);
-    groundGradient.addColorStop(0, '#0f172a');
-    groundGradient.addColorStop(1, '#020617');
-    ctx.fillStyle = groundGradient;
-    ctx.fillRect(groundLeft, GROUND_Y - groundHeight, groundWidth, groundHeight + 60);
-
-    // Asphalt lanes
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-    ctx.fillRect(groundLeft, GROUND_Y - 110, groundWidth, 70);
-
-    // Lane markings
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.45)';
-    ctx.lineWidth = 4;
-    ctx.setLineDash([18, 18]);
-    ctx.beginPath();
-    ctx.moveTo(groundLeft, GROUND_Y - 74);
-    ctx.lineTo(groundLeft + groundWidth, GROUND_Y - 74);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Spider-web arcs on the ground to match game theme
-    const webCenterY = GROUND_Y - 18;
-    ctx.strokeStyle = 'rgba(239, 68, 68, 0.2)';
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 7; i++) {
-      const radius = 45 + i * 24;
-      ctx.beginPath();
-      ctx.arc(state.cameraX + canvasWidth * 0.5, webCenterY, radius, Math.PI, Math.PI * 2);
-      ctx.stroke();
-    }
-    for (let i = -5; i <= 5; i++) {
-      const x = state.cameraX + canvasWidth * 0.5 + i * 30;
-      ctx.beginPath();
-      ctx.moveTo(state.cameraX + canvasWidth * 0.5, webCenterY);
-      ctx.lineTo(x, GROUND_Y + 10);
-      ctx.stroke();
-    }
-
-    // Glowing top line of the ground
-    ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(groundLeft, GROUND_Y - 110);
-    ctx.lineTo(groundLeft + groundWidth, GROUND_Y - 110);
-    ctx.stroke();
 
     // Draw Buildings (Foreground)
     state.buildings.forEach(b => {
@@ -611,54 +466,58 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       }
     }
 
-    // Draw enemies (only ground enemies, no flying units)
-    state.enemies.forEach(enemy => {
+    // Draw Obstacles
+    state.obstacles.forEach(obs => {
+      const actualY = obs.y + Math.sin(obs.offsetY) * 20;
+      
       ctx.save();
-      ctx.translate(enemy.x, enemy.y);
-      ctx.scale(enemy.direction, 1);
-
-      if (enemy.type === 'goblin') {
-        ctx.fillStyle = '#16a34a';
-        ctx.beginPath();
-        ctx.arc(0, 0, enemy.radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#7f1d1d';
-        ctx.fillRect(-enemy.radius * 0.4, -enemy.radius * 0.9, enemy.radius * 0.8, enemy.radius * 0.5);
-      } else if (enemy.type === 'lizard') {
-        ctx.fillStyle = '#22c55e';
-        ctx.beginPath();
-        ctx.ellipse(0, 0, enemy.radius * 1.2, enemy.radius * 0.8, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillRect(enemy.radius * 0.2, -enemy.radius * 0.2, enemy.radius, enemy.radius * 0.2);
-      } else {
-        ctx.fillStyle = '#4b5563';
-        ctx.beginPath();
-        ctx.arc(0, 0, enemy.radius, 0, Math.PI * 2);
-        ctx.fill();
+      ctx.translate(obs.x, actualY);
+      
+      if (obs.type === 'mine') {
+        // Spiky floating mine
         ctx.fillStyle = '#ef4444';
-        ctx.fillRect(-enemy.radius * 0.5, -enemy.radius * 0.35, enemy.radius, enemy.radius * 0.3);
+        ctx.beginPath();
+        ctx.arc(0, 0, obs.radius, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.fillStyle = '#b91c1c';
+        for (let i = 0; i < 8; i++) {
+          const angle = (i / 8) * Math.PI * 2 + obs.offsetY;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(angle) * obs.radius, Math.sin(angle) * obs.radius);
+          ctx.lineTo(Math.cos(angle - 0.2) * (obs.radius - 5), Math.sin(angle - 0.2) * (obs.radius - 5));
+          ctx.lineTo(Math.cos(angle) * (obs.radius + 8), Math.sin(angle) * (obs.radius + 8));
+          ctx.lineTo(Math.cos(angle + 0.2) * (obs.radius - 5), Math.sin(angle + 0.2) * (obs.radius - 5));
+          ctx.fill();
+        }
+        
+        // Glowing center
+        ctx.fillStyle = '#fca5a5';
+        ctx.beginPath();
+        ctx.arc(0, 0, obs.radius * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Drone
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(-obs.radius, -obs.radius * 0.4, obs.radius * 2, obs.radius * 0.8);
+        
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.arc(0, 0, obs.radius * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Propellers
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-obs.radius, -obs.radius * 0.4);
+        ctx.lineTo(-obs.radius + Math.cos(obs.offsetY * 10) * 10, -obs.radius * 0.4 - 5);
+        ctx.moveTo(obs.radius, -obs.radius * 0.4);
+        ctx.lineTo(obs.radius + Math.cos(obs.offsetY * 10) * 10, -obs.radius * 0.4 - 5);
+        ctx.stroke();
       }
-
-      ctx.fillStyle = '#111827';
-      ctx.beginPath();
-      ctx.arc(enemy.radius * 0.2, -enemy.radius * 0.15, 3, 0, Math.PI * 2);
-      ctx.fill();
+      
       ctx.restore();
-    });
-
-    // Draw web shots
-    state.webShots.forEach(shot => {
-      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(shot.x, shot.y, 3.5, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(shot.x - 6, shot.y);
-      ctx.lineTo(shot.x + 6, shot.y);
-      ctx.moveTo(shot.x, shot.y - 6);
-      ctx.lineTo(shot.x, shot.y + 6);
-      ctx.stroke();
     });
 
     const colors = getCostumeColors(costume);
@@ -690,9 +549,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
     // Draw Player
     const p = state.player;
-    const isGrounded = p.y + p.radius >= GROUND_Y - 0.5;
-    const velocityAngle = isGrounded ? 0 : Math.atan2(p.vy, p.vx);
-    const walkSwing = isGrounded ? Math.sin(Date.now() * 0.018 + p.x * 0.04) * Math.min(1, Math.abs(p.vx) / 120) : 0;
+    const velocityAngle = Math.atan2(p.vy, p.vx);
     
     // Flashing effect if invulnerable
     const isInvulnerable = Date.now() < p.invulnerableUntil;
@@ -722,15 +579,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     // Rotation based on velocity
     ctx.rotate(velocityAngle);
 
-    // Legs
+    // Legs (trailing behind)
     ctx.strokeStyle = colors.secondary;
     ctx.lineWidth = 6;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(-8, -5);
-    ctx.lineTo(-22 + walkSwing * 7, -10 - walkSwing * 4);
+    ctx.lineTo(-22, -10); // Left leg
     ctx.moveTo(-8, 5);
-    ctx.lineTo(-22 - walkSwing * 7, 10 + walkSwing * 4);
+    ctx.lineTo(-22, 10); // Right leg
     ctx.stroke();
 
     // Body (Oval)
