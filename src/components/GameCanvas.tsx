@@ -598,15 +598,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       const ny = dx / distance;
       const now = performance.now() / 1000;
       const speedRatio = Math.min(1, Math.hypot(state.player.vx, state.player.vy) / 900);
-      const wave = Math.sin(now * 18 + distance * 0.035 + sideSeed) * (6 + speedRatio * 9);
-      const curveLift = distance * 0.08 + wave + web.shotTension * 8;
-      const cx = (startX + end.x) * 0.5 + nx * curveLift;
-      const cy = (startY + end.y) * 0.5 + ny * curveLift;
+      const wave = Math.sin(now * 16 + distance * 0.03 + sideSeed) * (5 + speedRatio * 8);
+      const sagBase = distance * (web.shooting ? 0.07 : 0.11);
+      const sag = sagBase + wave + web.shotTension * 7;
+
+      // Blend a perpendicular bend with downward pull to get a "bow" arc like Spiderdoll.
+      const downPull = web.shooting ? 0.35 : 0.62;
+      const bendX = nx * (1 - downPull);
+      const bendY = ny * (1 - downPull) + downPull;
+      const bendLen = Math.hypot(bendX, bendY) || 1;
+      const bendDirX = bendX / bendLen;
+      const bendDirY = bendY / bendLen;
+
+      const c1x = startX + dx * 0.28 + bendDirX * sag;
+      const c1y = startY + dy * 0.28 + bendDirY * sag;
+      const c2x = startX + dx * 0.72 + bendDirX * sag;
+      const c2y = startY + dy * 0.72 + bendDirY * sag;
 
       const sampleCurvePoint = (t: number, offset = 0) => {
         const inv = 1 - t;
-        const x = inv * inv * startX + 2 * inv * t * (cx + nx * offset) + t * t * end.x;
-        const y = inv * inv * startY + 2 * inv * t * (cy + ny * offset) + t * t * end.y;
+        const x =
+          inv * inv * inv * startX +
+          3 * inv * inv * t * (c1x + bendDirX * offset) +
+          3 * inv * t * t * (c2x + bendDirX * offset) +
+          t * t * t * end.x;
+        const y =
+          inv * inv * inv * startY +
+          3 * inv * inv * t * (c1y + bendDirY * offset) +
+          3 * inv * t * t * (c2y + bendDirY * offset) +
+          t * t * t * end.y;
         return { x, y };
       };
 
@@ -616,8 +636,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
       for (const offset of [-2.1, 0, 2.1]) {
         ctx.beginPath();
-        ctx.moveTo(startX + nx * offset, startY + ny * offset);
-        ctx.quadraticCurveTo(cx + nx * offset, cy + ny * offset, end.x, end.y);
+        ctx.moveTo(startX + bendDirX * offset, startY + bendDirY * offset);
+        ctx.bezierCurveTo(
+          c1x + bendDirX * offset,
+          c1y + bendDirY * offset,
+          c2x + bendDirX * offset,
+          c2y + bendDirY * offset,
+          end.x,
+          end.y
+        );
         ctx.strokeStyle = offset === 0 ? colors.web : 'rgba(255,255,255,0.9)';
         ctx.lineWidth = offset === 0 ? 2.7 : 1.1;
         ctx.globalAlpha = offset === 0 ? 1 : 0.75;
