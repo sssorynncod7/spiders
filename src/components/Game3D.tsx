@@ -28,6 +28,10 @@ const GLIDE_DURATION = 0.8;
 const GLIDE_GRAVITY_REDUCTION = 0.35;
 const BUILDING_SPACING = 80;
 const BUILDING_WIDTH = 40;
+const BUILDING_DEPTH_BONUS = 45;
+const WALKABLE_BUILDING_CHANCE = 0.45;
+const PLAYER_RADIUS = 2;
+const ROOF_SNAP_TOLERANCE = 16;
 
 const getCostumeColors = (id: CostumeId) => {
   switch (id) {
@@ -46,13 +50,15 @@ interface BuildingData {
   position: THREE.Vector3;
   size: THREE.Vector3;
   color: string;
+  walkable: boolean;
 }
 
 const generateBuilding = (z: number, id: number, isLeft: boolean): BuildingData => {
   const x = isLeft ? -30 - Math.random() * 40 : 30 + Math.random() * 40;
   const height = 150 + Math.random() * 200;
   const width = BUILDING_WIDTH + Math.random() * 20;
-  const depth = BUILDING_WIDTH + Math.random() * 20;
+  const extraDepth = Math.random() < WALKABLE_BUILDING_CHANCE ? BUILDING_DEPTH_BONUS + Math.random() * 55 : 0;
+  const depth = BUILDING_WIDTH + Math.random() * 20 + extraDepth;
   
   const colors = ['#0f172a', '#1e293b', '#334155', '#020617'];
   const color = colors[Math.floor(Math.random() * colors.length)];
@@ -61,7 +67,8 @@ const generateBuilding = (z: number, id: number, isLeft: boolean): BuildingData 
     id,
     position: new THREE.Vector3(x, height / 2, z),
     size: new THREE.Vector3(width, height, depth),
-    color
+    color,
+    walkable: extraDepth > 0
   };
 };
 
@@ -210,6 +217,25 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
 
       s.pos.addScaledVector(s.vel, dt);
 
+      // Allow landing/running across selected rooftops to create parkour moments.
+      for (const building of buildingsRef.current) {
+        if (!building.walkable) continue;
+
+        const halfWidth = building.size.x / 2;
+        const halfDepth = building.size.z / 2;
+        const topY = building.size.y;
+
+        const isWithinX = Math.abs(s.pos.x - building.position.x) <= halfWidth + PLAYER_RADIUS;
+        const isWithinZ = Math.abs(s.pos.z - building.position.z) <= halfDepth + PLAYER_RADIUS;
+        const isNearRoof = s.pos.y <= topY + PLAYER_RADIUS && s.pos.y >= topY - ROOF_SNAP_TOLERANCE;
+
+        if (isWithinX && isWithinZ && isNearRoof && s.vel.y <= 0) {
+          s.pos.y = topY + PLAYER_RADIUS;
+          s.vel.y = 0;
+          break;
+        }
+      }
+
       // Multiple iterations avoid post-shot instability and rope stretch jitter.
       for (let i = 0; i < 3; i++) {
         solveWebConstraint(s.leftWeb, dt);
@@ -286,33 +312,69 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
 };
 
 const WebLine = ({ startPos, endPos, color }: { startPos: THREE.Vector3, endPos: THREE.Vector3, color: string }) => {
-  const ref = useRef<any>(null);
-  
-  useFrame(() => {
-    if (ref.current) {
-      const positions = ref.current.geometry.attributes.position.array;
-      positions[0] = startPos.x;
-      positions[1] = startPos.y;
-      positions[2] = startPos.z;
-      positions[3] = endPos.x;
-      positions[4] = endPos.y;
-      positions[5] = endPos.z;
-      ref.current.geometry.attributes.position.needsUpdate = true;
+  const coreRef = useRef<any>(null);
+  const glowRef = useRef<any>(null);
+  const supportRef = useRef<any>(null);
+  const SEGMENTS = 24;
+
+  useFrame(({ clock }) => {
+    const updateLine = (lineRef: React.RefObject<any>, sagFactor: number, sideOffset: number) => {
+      if (!lineRef.current) return;
+      const positions = lineRef.current.geometry.attributes.position.array as Float32Array;
+      const temp = new THREE.Vector3();
+
+      for (let i = 0; i <= SEGMENTS; i++) {
+        const t = i / SEGMENTS;
+        temp.lerpVectors(startPos, endPos, t);
+        const arc = Math.sin(t * Math.PI) * sagFactor;
+        temp.y -= arc;
+        temp.x += sideOffset * Math.sin(t * Math.PI);
+
+        const idx = i * 3;
+        positions[idx] = temp.x;
+        positions[idx + 1] = temp.y;
+        positions[idx + 2] = temp.z;
+      }
+
+      lineRef.current.geometry.attributes.position.needsUpdate = true;
+    };
+
+    updateLine(coreRef, 5, 0);
+    updateLine(glowRef, 8, 0.8);
+    updateLine(supportRef, 8, -0.8);
+
+    const pulse = 0.55 + Math.sin(clock.elapsedTime * 12) * 0.15;
+    if (glowRef.current?.material) {
+      glowRef.current.material.opacity = pulse;
     }
   });
 
+  const lineArray = useMemo(() => new Float32Array((SEGMENTS + 1) * 3), []);
+
   return (
-    <line ref={ref}>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          count={2}
-          array={new Float32Array(6)}
-          itemSize={3}
-        />
-      </bufferGeometry>
-      <lineBasicMaterial color={color} linewidth={3} />
-    </line>
+    <group>
+      <line ref={glowRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={SEGMENTS + 1} array={lineArray.slice()} itemSize={3} />
+        </bufferGeometry>
+        <lineBasicMaterial color={color} transparent opacity={0.55} />
+      </line>
+      <line ref={supportRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={SEGMENTS + 1} array={lineArray.slice()} itemSize={3} />
+        </bufferGeometry>
+        <lineBasicMaterial color={color} transparent opacity={0.35} />
+      </line>
+      <line ref={coreRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={SEGMENTS + 1} array={lineArray.slice()} itemSize={3} />
+        </bufferGeometry>
+        <lineBasicMaterial color="#ffffff" transparent opacity={0.95} />
+      </line>
+      <Sphere args={[0.9, 12, 12]} position={[endPos.x, endPos.y, endPos.z]}>
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.3} />
+      </Sphere>
+    </group>
   );
 };
 
@@ -358,12 +420,20 @@ const City = ({ buildingsRef }: { buildingsRef: React.MutableRefObject<BuildingD
   return (
     <group>
       {buildings.map(b => (
-        <Box key={b.id} position={b.position} args={[b.size.x, b.size.y, b.size.z]}>
-          <meshStandardMaterial color={b.color} roughness={0.9} metalness={0.1} />
-          {/* Simple Windows */}
-          <edgesGeometry attach="geometry" />
-          <lineBasicMaterial attach="material" color="#334155" linewidth={1} opacity={0.2} transparent />
-        </Box>
+        <group key={b.id}>
+          <Box position={b.position} args={[b.size.x, b.size.y, b.size.z]}>
+            <meshStandardMaterial color={b.color} roughness={0.9} metalness={0.1} />
+            {/* Simple Windows */}
+            <edgesGeometry attach="geometry" />
+            <lineBasicMaterial attach="material" color="#334155" linewidth={1} opacity={0.2} transparent />
+          </Box>
+          {b.walkable && (
+            <mesh position={[b.position.x, b.size.y + 0.08, b.position.z]} rotation={[-Math.PI / 2, 0, 0]}>
+              <planeGeometry args={[b.size.x * 0.92, b.size.z * 0.92]} />
+              <meshStandardMaterial color="#1d4ed8" emissive="#2563eb" emissiveIntensity={0.25} transparent opacity={0.55} />
+            </mesh>
+          )}
+        </group>
       ))}
       
       {/* Ground */}
