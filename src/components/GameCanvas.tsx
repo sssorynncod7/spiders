@@ -12,6 +12,13 @@ const GROUND_Y = ABYSS_Y - 40;
 const BASE_RUN_SPEED = 420;
 const JUMP_VELOCITY = -620;
 const JUMP_BUFFER_MS = 150;
+const WEB_SHOT_SPEED = 1500;
+const WEB_RANGE_MIN = 160;
+const WEB_RANGE_MAX = 620;
+const WEB_SPRING_STIFFNESS = 28;
+const WEB_DAMPING = 6;
+const WEB_RETRACT_PER_SECOND = 26;
+const WEB_TANGENTIAL_PUSH = 90;
 
 interface GameCanvasProps {
   costume: CostumeId;
@@ -135,16 +142,135 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     jumpBufferUntilRef.current = Date.now() + JUMP_BUFFER_MS;
   };
 
+  const getWorldPointer = (event: MouseEvent) => {
+    const canvas = canvasRef.current;
+    const state = stateRef.current;
+    if (!canvas) {
+      return { x: state.player.x + 260, y: state.player.y - 220 };
+    }
+    const rect = canvas.getBoundingClientRect();
+    const localX = event.clientX - rect.left;
+    const localY = event.clientY - rect.top;
+    return {
+      x: localX + state.cameraX,
+      y: localY + state.cameraY,
+    };
+  };
+
+  const getNearestAnchor = (aimPoint: Point, playerX: number) => {
+    const state = stateRef.current;
+    let bestAnchor: Point | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (const building of state.buildings) {
+      const roofY = building.y + 12;
+      const candidates: Point[] = [
+        { x: building.x + 12, y: roofY },
+        { x: building.x + building.width * 0.32, y: roofY - 10 },
+        { x: building.x + building.width * 0.68, y: roofY - 8 },
+        { x: building.x + building.width - 12, y: roofY },
+      ];
+
+      for (const candidate of candidates) {
+        const dx = candidate.x - playerX;
+        if (dx < -120) continue;
+        const dist = Math.hypot(aimPoint.x - candidate.x, aimPoint.y - candidate.y);
+        const playerDist = Math.hypot(candidate.x - playerX, candidate.y - state.player.y);
+        if (playerDist < WEB_RANGE_MIN || playerDist > WEB_RANGE_MAX) continue;
+        if (dist < bestScore) {
+          bestScore = dist;
+          bestAnchor = candidate;
+        }
+      }
+    }
+
+    return bestAnchor;
+  };
+
+  const shootWeb = (webKey: 'leftWeb' | 'rightWeb', targetHint?: Point) => {
+    const state = stateRef.current;
+    const player = state.player;
+    const web = player[webKey];
+    const fallbackTarget = {
+      x: player.x + 260,
+      y: player.y - 220,
+    };
+    const aimPoint = targetHint ?? fallbackTarget;
+    const anchor = getNearestAnchor(aimPoint, player.x);
+    if (!anchor) return;
+
+    const shoulderOffset = webKey === 'leftWeb' ? -8 : 8;
+    web.active = false;
+    web.shooting = true;
+    web.shotTension = 0;
+    web.anchor = null;
+    web.targetAnchor = anchor;
+    web.tip = { x: player.x, y: player.y + shoulderOffset };
+  };
+
+  const releaseWeb = (webKey: 'leftWeb' | 'rightWeb') => {
+    const web = stateRef.current.player[webKey];
+    web.active = false;
+    web.shooting = false;
+    web.anchor = null;
+    web.targetAnchor = null;
+    web.tip = null;
+    web.shotTension = 0;
+  };
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
         e.preventDefault();
         queueJump();
       }
+      if (e.code === 'KeyQ') {
+        e.preventDefault();
+        shootWeb('leftWeb');
+      }
+      if (e.code === 'KeyE') {
+        e.preventDefault();
+        shootWeb('rightWeb');
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'KeyQ') {
+        releaseWeb('leftWeb');
+      }
+      if (e.code === 'KeyE') {
+        releaseWeb('rightWeb');
+      }
+    };
+    const onMouseMove = (e: MouseEvent) => {
+      stateRef.current.pointer = getWorldPointer(e);
+    };
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button === 0) {
+        shootWeb('leftWeb', getWorldPointer(e));
+      }
+      if (e.button === 2) {
+        shootWeb('rightWeb', getWorldPointer(e));
+      }
+    };
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button === 0) {
+        releaseWeb('leftWeb');
+      }
+      if (e.button === 2) {
+        releaseWeb('rightWeb');
+      }
     };
     window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mouseup', onMouseUp);
     };
   }, []);
 
@@ -166,6 +292,55 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     player.vy *= drag;
     const targetRunSpeed = BASE_RUN_SPEED + Math.min(260, state.score * 0.6);
     player.vx += (targetRunSpeed - player.vx) * 0.1;
+
+    const applyWebPhysics = (webKey: 'leftWeb' | 'rightWeb') => {
+      const web = player[webKey];
+      if (web.shooting && web.tip && web.targetAnchor) {
+        const toTargetX = web.targetAnchor.x - web.tip.x;
+        const toTargetY = web.targetAnchor.y - web.tip.y;
+        const distance = Math.hypot(toTargetX, toTargetY);
+        if (distance < WEB_SHOT_SPEED * dt) {
+          web.tip = { ...web.targetAnchor };
+          web.anchor = { ...web.targetAnchor };
+          web.active = true;
+          web.shooting = false;
+          web.targetAnchor = null;
+          web.shotTension = 1;
+          web.restLength = Math.max(80, Math.hypot(player.x - web.anchor.x, player.y - web.anchor.y) * 0.88);
+        } else if (distance > 0.0001) {
+          const travel = WEB_SHOT_SPEED * dt;
+          web.tip.x += (toTargetX / distance) * travel;
+          web.tip.y += (toTargetY / distance) * travel;
+          web.shotTension = Math.min(1, web.shotTension + dt * 2);
+        }
+      }
+
+      if (!web.active || !web.anchor) return;
+      const dx = web.anchor.x - player.x;
+      const dy = web.anchor.y - player.y;
+      const dist = Math.hypot(dx, dy);
+      web.restLength = Math.max(70, web.restLength - WEB_RETRACT_PER_SECOND * dt);
+      if (dist <= web.restLength || dist < 0.0001) {
+        web.shotTension = Math.max(0, web.shotTension - dt * 0.9);
+        return;
+      }
+
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const stretch = dist - web.restLength;
+      const radialSpeed = player.vx * nx + player.vy * ny;
+      const springForce = stretch * WEB_SPRING_STIFFNESS;
+      const dampingForce = radialSpeed * WEB_DAMPING;
+      const pull = springForce - dampingForce;
+
+      player.vx += nx * pull * dt;
+      player.vy += ny * pull * dt;
+      player.vx += -ny * WEB_TANGENTIAL_PUSH * dt;
+      web.shotTension = Math.min(1, 0.45 + stretch / 180);
+    };
+
+    applyWebPhysics('leftWeb');
+    applyWebPhysics('rightWeb');
 
     // Update Position
     player.x += player.vx * dt;
@@ -529,6 +704,45 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     drawArm(-6); // Left arm
     drawArm(6); // Right arm
 
+    const drawWeb = (web: typeof p.leftWeb, offsetY: number) => {
+      if (!web.anchor && !web.tip && !web.targetAnchor) return;
+      const shoulderX = p.x + Math.cos(velocityAngle) * 5 - Math.sin(velocityAngle) * offsetY;
+      const shoulderY = p.y + Math.sin(velocityAngle) * 5 + Math.cos(velocityAngle) * offsetY;
+      const end = web.active
+        ? web.anchor
+        : web.shooting
+          ? web.tip
+          : web.targetAnchor;
+      if (!end) return;
+
+      const tension = Math.min(1, Math.max(0.15, web.shotTension));
+      const dx = end.x - shoulderX;
+      const dy = end.y - shoulderY;
+      const perpX = -dy;
+      const perpY = dx;
+      const perpLen = Math.max(1, Math.hypot(perpX, perpY));
+      const sag = web.active ? Math.min(18, Math.hypot(dx, dy) * 0.06) * (1 - tension) : 0;
+      const cpX = shoulderX + dx * 0.5 + (perpX / perpLen) * sag;
+      const cpY = shoulderY + dy * 0.5 + (perpY / perpLen) * sag;
+
+      ctx.lineWidth = 1 + tension * 1.6;
+      ctx.strokeStyle = `rgba(240, 244, 255, ${0.55 + tension * 0.45})`;
+      ctx.beginPath();
+      ctx.moveTo(shoulderX, shoulderY);
+      ctx.quadraticCurveTo(cpX, cpY, end.x, end.y);
+      ctx.stroke();
+
+      if (web.active && web.anchor) {
+        ctx.fillStyle = 'rgba(248,250,252,0.75)';
+        ctx.beginPath();
+        ctx.arc(web.anchor.x, web.anchor.y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    };
+
+    drawWeb(p.leftWeb, -6);
+    drawWeb(p.rightWeb, 6);
+
     ctx.restore();
     ctx.globalAlpha = 1.0; // Reset alpha after player draw
 
@@ -590,7 +804,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     <div ref={containerRef} className="relative w-full h-full flex items-center justify-center bg-black overflow-hidden touch-none">
       <canvas
         ref={canvasRef}
-        onMouseDown={queueJump}
         onTouchStart={(e) => {
           if (e.cancelable) e.preventDefault();
           queueJump();

@@ -238,7 +238,7 @@ export default function App() {
               <div className="bg-black/60 backdrop-blur-md px-4 py-2.5 rounded-full border border-white/10 flex items-center gap-2 max-w-full">
                 <Keyboard size={14} className="text-red-500 flex-shrink-0" />
                 <span className="text-[10px] sm:text-xs font-bold text-white/80 uppercase tracking-tight text-center">
-                  ENGELLERDEN KAÇMAK İÇİN SPACE (MOBİLDE EKRANA DOKUN)
+                  ZIPLAMA: SPACE • AĞ: Q / E VEYA SOL-SAĞ TIK (MOBİL: DOKUN)
                 </span>
               </div>
             </div>
