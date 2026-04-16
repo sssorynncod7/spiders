@@ -13,10 +13,13 @@ const WEB_SHOT_SPEED = 2600;
 const WEB_SHOT_TENSION_DECAY = 4.5;
 const WEB_OSCILLATION_SPEED = 11;
 const WEB_OSCILLATION_AMPLITUDE = 22;
+const WEB_ATTACH_MOMENTUM_BLEND = 0.75;
+const WEB_RELEASE_BOOST = 0.16;
 const FIXED_TIMESTEP = 1 / 120;
 const MAX_FRAME_DELTA = 1 / 30;
 const BUILDING_SPACING = 300;
 const ABYSS_Y = 2000;
+const GROUND_Y = ABYSS_Y - 40;
 
 interface GameCanvasProps {
   costume: CostumeId;
@@ -84,6 +87,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
         if (Math.random() > 0.4) {
           initialObstacles.push(generateObstacle(bX + BUILDING_SPACING / 2 + (Math.random() * 150 - 75)));
         }
+        if (Math.random() > 0.25) {
+          initialObstacles.push(generateGroundObstacle(bX + BUILDING_SPACING * 0.62));
+        }
       }
     }
     stateRef.current.buildings = initialBuildings;
@@ -96,7 +102,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       y: ABYSS_Y - 200 - Math.random() * 600, // Lower down
       radius: 20,
       type: Math.random() > 0.5 ? 'drone' : 'mine',
+      lane: 'air',
       offsetY: Math.random() * Math.PI * 2, // Random starting phase for floating
+    };
+  };
+
+  const generateGroundObstacle = (x: number): Obstacle => {
+    const isSpike = Math.random() > 0.45;
+    const width = isSpike ? 44 : 62;
+    const height = isSpike ? 34 : 28;
+    return {
+      x,
+      y: GROUND_Y,
+      radius: Math.max(width, height) * 0.4,
+      type: isSpike ? 'spike' : 'barrier',
+      lane: 'ground',
+      width,
+      height,
+      offsetY: Math.random() * Math.PI * 2,
     };
   };
 
@@ -155,11 +178,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     const worldY = pos.y + state.cameraY;
 
     let bestAnchor: Point | null = null;
+    let bestDistance = Infinity;
 
     for (const b of state.buildings) {
-      if (worldX >= b.x && worldX <= b.x + b.width && worldY >= b.y) {
-        bestAnchor = { x: worldX, y: worldY };
-        break;
+      const inBuildingRange = worldX >= b.x - 30 && worldX <= b.x + b.width + 30 && worldY >= b.y - 120;
+      if (!inBuildingRange) continue;
+      const clampedX = Math.min(Math.max(worldX, b.x + 4), b.x + b.width - 4);
+      const roofY = b.y;
+      const anchor = { x: clampedX, y: roofY };
+      const dist = Math.hypot(anchor.x - state.player.x, anchor.y - state.player.y);
+      if (dist < bestDistance) {
+        bestAnchor = anchor;
+        bestDistance = dist;
       }
     }
 
@@ -171,6 +201,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       web.shooting = true;
       web.shotTension = 1;
       web.restLength = Math.hypot(bestAnchor.x - state.player.x, bestAnchor.y - state.player.y);
+
+      // Spiderdoll-like snap: preserve momentum but redirect a bit toward rope tangent.
+      const toAnchorX = bestAnchor.x - state.player.x;
+      const toAnchorY = bestAnchor.y - state.player.y;
+      const len = Math.hypot(toAnchorX, toAnchorY) || 1;
+      const nx = toAnchorX / len;
+      const ny = toAnchorY / len;
+      const radial = state.player.vx * nx + state.player.vy * ny;
+      state.player.vx -= nx * radial * WEB_ATTACH_MOMENTUM_BLEND;
+      state.player.vy -= ny * radial * WEB_ATTACH_MOMENTUM_BLEND;
     }
   };
 
@@ -191,6 +231,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     const state = stateRef.current;
     const isRightClick = e.button === 2;
     const web = isRightClick ? state.player.rightWeb : state.player.leftWeb;
+    if (web.active && web.anchor) {
+      const dx = state.player.x - web.anchor.x;
+      const dy = state.player.y - web.anchor.y;
+      const distance = Math.hypot(dx, dy) || 1;
+      const rx = dx / distance;
+      const ry = dy / distance;
+      const radialSpeed = state.player.vx * rx + state.player.vy * ry;
+      if (radialSpeed < 0) {
+        state.player.vx += -rx * radialSpeed * WEB_RELEASE_BOOST;
+        state.player.vy += -ry * radialSpeed * WEB_RELEASE_BOOST;
+      }
+    }
     web.active = false;
     web.anchor = null;
     web.targetAnchor = null;
@@ -319,9 +371,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
           player.vy += ny * tensionAcceleration * dt;
         }
 
-        const correction = stretch * 0.22;
+        // Positional correction (Verlet style) keeps rope feel tight like Spiderdoll.
+        const correction = stretch * 0.28;
         player.x += nx * correction;
         player.y += ny * correction;
+
+        if (radialVelocity > 0) {
+          player.vx -= nx * radialVelocity * 0.52;
+          player.vy -= ny * radialVelocity * 0.52;
+        }
       }
     };
 
@@ -338,6 +396,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     // Update Position
     player.x += player.vx * dt;
     player.y += player.vy * dt;
+
+    // Ground collision
+    const groundLevel = GROUND_Y - player.radius;
+    if (player.y > groundLevel) {
+      player.y = groundLevel;
+      if (player.vy > 140) {
+        state.isGameOver = true;
+        onGameOver(state.score);
+        return;
+      }
+      player.vy = Math.min(0, player.vy * -0.2);
+      player.vx *= 0.94;
+    }
 
     // Smooth Camera Follow
     const targetCamX = player.x - canvasWidth * 0.35;
@@ -360,6 +431,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       if (Math.random() > 0.4) {
         state.obstacles.push(generateObstacle(nextX - BUILDING_SPACING / 2 + (Math.random() * 150 - 75)));
       }
+      if (Math.random() > 0.2) {
+        state.obstacles.push(generateGroundObstacle(nextX - BUILDING_SPACING * 0.15 + (Math.random() * 150 - 75)));
+      }
     }
 
     // Remove old buildings and obstacles
@@ -375,18 +449,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     for (const obs of state.obstacles) {
       // Floating animation
       obs.offsetY += 0.05;
-      
+      const actualY = obs.lane === 'air' ? obs.y + Math.sin(obs.offsetY) * 20 : obs.y;
+      const halfW = (obs.width ?? obs.radius * 2) / 2;
+      const halfH = (obs.height ?? obs.radius * 2) / 2;
+
       if (now > player.invulnerableUntil) {
-        const actualY = obs.y + Math.sin(obs.offsetY) * 20;
-        const dist = Math.hypot(player.x - obs.x, player.y - actualY);
-        if (dist < player.radius + obs.radius) {
+        const hit =
+          obs.lane === 'air'
+            ? Math.hypot(player.x - obs.x, player.y - actualY) < player.radius + obs.radius
+            : Math.abs(player.x - obs.x) < player.radius + halfW && Math.abs(player.y - (actualY - halfH)) < player.radius + halfH;
+        if (hit) {
           state.lives -= 1;
           onLivesUpdate(state.lives);
           player.invulnerableUntil = now + 1500; // 1.5s invulnerability
           
           // Bounce back
-          player.vx *= -0.5;
-          player.vy = -220;
+          player.vx *= obs.lane === 'ground' ? -0.3 : -0.5;
+          player.vy = obs.lane === 'ground' ? -120 : -220;
           
           // Break webs
           player.leftWeb.active = false;
@@ -525,9 +604,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       }
     }
 
+    // Ground plane + lane markings
+    const groundTop = GROUND_Y;
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(state.cameraX - 400, groundTop, canvasWidth + 1200, canvasHeight * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.setLineDash([26, 18]);
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(state.cameraX - 300, groundTop + 36);
+    ctx.lineTo(state.cameraX + canvasWidth + 900, groundTop + 36);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
     // Draw Obstacles
     state.obstacles.forEach(obs => {
-      const actualY = obs.y + Math.sin(obs.offsetY) * 20;
+      const actualY = obs.lane === 'air' ? obs.y + Math.sin(obs.offsetY) * 20 : obs.y;
       
       ctx.save();
       ctx.translate(obs.x, actualY);
@@ -555,7 +647,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
         ctx.beginPath();
         ctx.arc(0, 0, obs.radius * 0.4, 0, Math.PI * 2);
         ctx.fill();
-      } else {
+      } else if (obs.type === 'drone') {
         // Drone
         ctx.fillStyle = '#64748b';
         ctx.fillRect(-obs.radius, -obs.radius * 0.4, obs.radius * 2, obs.radius * 0.8);
@@ -574,6 +666,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
         ctx.moveTo(obs.radius, -obs.radius * 0.4);
         ctx.lineTo(obs.radius + Math.cos(obs.offsetY * 10) * 10, -obs.radius * 0.4 - 5);
         ctx.stroke();
+      } else if (obs.type === 'barrier') {
+        const width = obs.width ?? 60;
+        const height = obs.height ?? 28;
+        ctx.fillStyle = '#374151';
+        ctx.fillRect(-width / 2, -height, width, height);
+        ctx.fillStyle = '#9ca3af';
+        ctx.fillRect(-width / 2, -height, width, 4);
+        for (let i = -width / 2 + 8; i < width / 2 - 4; i += 14) {
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(i, -height + 6, 6, 6);
+        }
+      } else {
+        const width = obs.width ?? 44;
+        const height = obs.height ?? 34;
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.moveTo(-width / 2, 0);
+        ctx.lineTo(0, -height);
+        ctx.lineTo(width / 2, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#fca5a5';
+        ctx.fillRect(-2, -height * 0.72, 4, height * 0.55);
       }
       
       ctx.restore();

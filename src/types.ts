@@ -29,7 +29,10 @@ export interface Obstacle {
   x: number;
   y: number;
   radius: number;
-  type: 'drone' | 'mine';
+  type: 'drone' | 'mine' | 'barrier' | 'spike';
+  lane: 'air' | 'ground';
+  width?: number;
+  height?: number;
   offsetY: number; // For floating animation
 }
 
