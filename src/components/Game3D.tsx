@@ -73,8 +73,15 @@ const generateBuilding = (z: number, id: number, isLeft: boolean): BuildingData 
 };
 
 const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume: CostumeId, onGameOver: (score: number) => void, onScoreUpdate?: (score: number) => void, buildingsRef: React.MutableRefObject<BuildingData[]> }) => {
-  const { camera } = useThree();
+  const { camera, gl } = useThree();
   const playerRef = useRef<THREE.Group>(null);
+  const pointerSides = useRef<Map<number, 'left' | 'right'>>(new Map());
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const ndcPointerRef = useRef(new THREE.Vector2());
+  const intersectionRef = useRef(new THREE.Vector3());
+  const scratchBoxRef = useRef(new THREE.Box3());
+  const scratchMinRef = useRef(new THREE.Vector3());
+  const scratchMaxRef = useRef(new THREE.Vector3());
   
   const state = useRef({
     pos: new THREE.Vector3(0, 150, 0),
@@ -90,33 +97,60 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
 
   const colors = useMemo(() => getCostumeColors(costume), [costume]);
 
-  const handlePointerDown = (e: PointerEvent) => {
-    if (state.current.isGameOver) return;
-    const x = e.clientX;
-    const isLeft = x < window.innerWidth / 2;
-    
+  const findAnchorFromPointer = (event: PointerEvent) => {
+    const domRect = gl.domElement.getBoundingClientRect();
+    const ndcX = ((event.clientX - domRect.left) / domRect.width) * 2 - 1;
+    const ndcY = -(((event.clientY - domRect.top) / domRect.height) * 2 - 1);
+    ndcPointerRef.current.set(ndcX, ndcY);
+
+    const raycaster = raycasterRef.current;
+    raycaster.setFromCamera(ndcPointerRef.current, camera);
+
     let bestBuilding: BuildingData | null = null;
-    let minDistance = Infinity;
-    
-    for (const b of buildingsRef.current) {
-      if (isLeft && b.position.x > 0) continue;
-      if (!isLeft && b.position.x < 0) continue;
-      
-      // Look for buildings ahead
-      if (b.position.z > state.current.pos.z) continue;
-      
-      const dist = state.current.pos.distanceTo(b.position);
-      if (dist < minDistance && dist < 400) {
-        minDistance = dist;
-        bestBuilding = b;
+    let closest = Infinity;
+
+    for (const building of buildingsRef.current) {
+      if (building.position.z > state.current.pos.z) continue;
+
+      scratchMinRef.current.set(
+        building.position.x - building.size.x / 2,
+        building.position.y - building.size.y / 2,
+        building.position.z - building.size.z / 2
+      );
+      scratchMaxRef.current.set(
+        building.position.x + building.size.x / 2,
+        building.position.y + building.size.y / 2,
+        building.position.z + building.size.z / 2
+      );
+      scratchBoxRef.current.set(scratchMinRef.current, scratchMaxRef.current);
+
+      if (!raycaster.ray.intersectBox(scratchBoxRef.current, intersectionRef.current)) {
+        continue;
+      }
+
+      const distance = state.current.pos.distanceTo(intersectionRef.current);
+      if (distance < 420 && distance < closest) {
+        closest = distance;
+        bestBuilding = building;
       }
     }
-    
+
+    return bestBuilding;
+  };
+
+  const handlePointerDown = (e: PointerEvent) => {
+    if (state.current.isGameOver) return;
+
+    const side: 'left' | 'right' = e.clientX < window.innerWidth / 2 ? 'left' : 'right';
+    pointerSides.current.set(e.pointerId, side);
+    const bestBuilding = findAnchorFromPointer(e);
+
     if (bestBuilding) {
-      const web = isLeft ? state.current.leftWeb : state.current.rightWeb;
+      const web = side === 'left' ? state.current.leftWeb : state.current.rightWeb;
       web.active = true;
-      // Anchor to the top inner corner of the building
-      const anchorX = bestBuilding.position.x + (isLeft ? bestBuilding.size.x/2 : -bestBuilding.size.x/2);
+      // Anchor to the closest top corner to player side to keep ropes readable.
+      const useLeftEdge = state.current.pos.x <= bestBuilding.position.x;
+      const anchorX = bestBuilding.position.x + (useLeftEdge ? -bestBuilding.size.x / 2 : bestBuilding.size.x / 2);
       web.anchor.set(anchorX, bestBuilding.size.y, bestBuilding.position.z);
       const initialLength = state.current.pos.distanceTo(web.anchor);
       web.restLength = THREE.MathUtils.clamp(initialLength * 0.88, WEB_MIN_LENGTH, WEB_MAX_LENGTH);
@@ -131,9 +165,9 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
 
   const handlePointerUp = (e: PointerEvent) => {
     const s = state.current;
-    const x = e.clientX;
-    const isLeft = x < window.innerWidth / 2;
-    const releasedWeb = isLeft ? s.leftWeb : s.rightWeb;
+    const side = pointerSides.current.get(e.pointerId) ?? (e.clientX < window.innerWidth / 2 ? 'left' : 'right');
+    pointerSides.current.delete(e.pointerId);
+    const releasedWeb = side === 'left' ? s.leftWeb : s.rightWeb;
     if (!releasedWeb.active) return;
 
     const ropeDir = new THREE.Vector3().subVectors(s.pos, releasedWeb.anchor).normalize();
@@ -161,9 +195,11 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
   useEffect(() => {
     window.addEventListener('pointerdown', handlePointerDown);
     window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
     return () => {
       window.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
     };
   }, []);
 
@@ -485,7 +521,7 @@ export default function Game3D({ costume, onGameOver, onScoreUpdate }: Game3DPro
       </div>
       
       <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-white/50 font-bold text-lg tracking-widest pointer-events-none uppercase">
-        Tap Left / Right
+        Aim & Tap
       </div>
     </div>
   );
