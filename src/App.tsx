@@ -1,19 +1,19 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GameCanvas } from './components/GameCanvas';
-import { Trophy, Play, HelpCircle, X, Keyboard, Info, Shirt, Users, Box, Code, Heart } from 'lucide-react';
+import { Trophy, Play, HelpCircle, X, MousePointer2, Info, Shirt, Users, Box, Code } from 'lucide-react';
 import { CostumeId } from './types';
 
 type Screen = 'START' | 'PLAYING' | 'GAMEOVER';
 
 const COSTUMES: { id: CostumeId; name: string; color1: string; color2: string }[] = [
-  { id: 'classic', name: 'Classic Spider-Man', color1: 'bg-red-500', color2: 'bg-blue-600' },
-  { id: 'symbiote', name: 'Symbiote', color1: 'bg-black', color2: 'bg-white' },
-  { id: 'miles', name: 'Miles Morales', color1: 'bg-black', color2: 'bg-red-500' },
-  { id: 'gwen', name: 'Spider-Gwen', color1: 'bg-white', color2: 'bg-pink-500' },
-  { id: 'iron', name: 'Iron Spider', color1: 'bg-red-600', color2: 'bg-yellow-400' },
-  { id: '2099', name: 'Spider-Man 2099', color1: 'bg-blue-800', color2: 'bg-red-500' },
-  { id: 'noir', name: 'Spider-Man Noir', color1: 'bg-stone-800', color2: 'bg-stone-950' },
+  { id: 'classic', name: 'Klasik', color1: 'bg-red-500', color2: 'bg-blue-600' },
+  { id: 'symbiote', name: 'Sembiyot', color1: 'bg-black', color2: 'bg-white' },
+  { id: 'miles', name: 'Miles', color1: 'bg-black', color2: 'bg-red-500' },
+  { id: 'gwen', name: 'Gwen', color1: 'bg-white', color2: 'bg-pink-500' },
+  { id: 'iron', name: 'Iron', color1: 'bg-red-600', color2: 'bg-yellow-400' },
+  { id: '2099', name: '2099', color1: 'bg-blue-800', color2: 'bg-red-500' },
+  { id: 'noir', name: 'Noir', color1: 'bg-stone-800', color2: 'bg-stone-950' },
 ];
 
 const CostumePreview = ({ costumeId }: { costumeId: CostumeId }) => {
@@ -66,7 +66,6 @@ const CostumePreview = ({ costumeId }: { costumeId: CostumeId }) => {
 export default function App() {
   const [screen, setScreen] = useState<Screen>('START');
   const [score, setScore] = useState(0);
-  const [lives, setLives] = useState(5);
   const [highScore, setHighScore] = useState(0);
   const [showHowTo, setShowHowTo] = useState(false);
   const [showAboutUs, setShowAboutUs] = useState(false);
@@ -118,7 +117,7 @@ export default function App() {
               className="mb-6"
             >
               <h1 className="text-5xl md:text-7xl font-black tracking-tighter text-red-600 uppercase italic drop-shadow-[0_5px_15px_rgba(239,68,68,0.5)]">
-                TinySpiders
+                Spider-Swing
               </h1>
               <p className="text-slate-400 text-base md:text-lg font-medium tracking-wide mt-1">
                 CITY ADVENTURE
@@ -129,7 +128,7 @@ export default function App() {
             <div className="mb-6 w-full bg-slate-900/50 p-4 rounded-3xl border border-slate-800 backdrop-blur-sm flex flex-col items-center">
               <div className="flex items-center justify-center gap-2 mb-1 text-slate-400 text-sm font-bold uppercase tracking-wider">
                 <Shirt size={16} />
-                <span>kayra naber</span>
+                <span>Kostüm Önizleme</span>
               </div>
               
               <CostumePreview costumeId={costume} />
@@ -157,11 +156,7 @@ export default function App() {
 
             <div className="flex flex-col gap-3 w-full">
               <button
-                onClick={() => {
-                  setScore(0);
-                  setLives(5);
-                  setScreen('PLAYING');
-                }}
+                onClick={() => setScreen('PLAYING')}
                 className="group relative flex items-center justify-center gap-3 bg-red-600 hover:bg-red-500 text-white py-4 px-8 rounded-2xl font-bold text-xl transition-all hover:scale-105 active:scale-95 shadow-[0_0_20px_rgba(239,68,68,0.3)]"
               >
                 <Play className="fill-current" />
@@ -206,16 +201,6 @@ export default function App() {
                 <span className="text-slate-400 text-[10px] font-bold uppercase tracking-widest block">SKOR</span>
                 <span className="text-xl font-black text-white tabular-nums">{score}</span>
               </div>
-              
-              <div className="flex gap-1 bg-slate-900/80 backdrop-blur-md border border-slate-700 px-3 py-2 rounded-full shadow-xl">
-                {[...Array(5)].map((_, i) => (
-                  <Heart 
-                    key={i} 
-                    size={20} 
-                    className={`${i < lives ? 'fill-red-500 text-red-500' : 'fill-slate-800 text-slate-700'} transition-colors`} 
-                  />
-                ))}
-              </div>
             </div>
 
             <div className="absolute top-4 right-4 z-10">
@@ -231,14 +216,13 @@ export default function App() {
               costume={costume}
               onGameOver={handleGameOver} 
               onScoreUpdate={setScore}
-              onLivesUpdate={setLives}
             />
 
             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none w-full px-4 flex justify-center">
               <div className="bg-black/60 backdrop-blur-md px-4 py-2.5 rounded-full border border-white/10 flex items-center gap-2 max-w-full">
-                <Keyboard size={14} className="text-red-500 flex-shrink-0" />
+                <MousePointer2 size={14} className="text-red-500 flex-shrink-0" />
                 <span className="text-[10px] sm:text-xs font-bold text-white/80 uppercase tracking-tight text-center">
-                  ZIPLAMA: SPACE • AĞ: Q / E VEYA SOL-SAĞ TIK (MOBİL: DOKUN)
+                  Sol Ekran: Sol Ağ | Sağ Ekran: Sağ Ağ
                 </span>
               </div>
             </div>
@@ -272,7 +256,6 @@ export default function App() {
               <button
                 onClick={() => {
                   setScore(0);
-                  setLives(5);
                   setScreen('PLAYING');
                 }}
                 className="bg-red-600 hover:bg-red-500 text-white py-4 px-8 rounded-2xl font-bold text-lg transition-all hover:scale-105 active:scale-95"

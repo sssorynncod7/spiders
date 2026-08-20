@@ -6,10 +6,6 @@ export interface Point {
 export interface Web {
   active: boolean;
   anchor: Point | null;
-  targetAnchor: Point | null;
-  tip: Point | null;
-  shooting: boolean;
-  shotTension: number;
   restLength: number;
 }
 
@@ -22,18 +18,6 @@ export interface Building {
   darkColor: string;
   hasAntenna: boolean;
   antennaX: number;
-  windows: Point[];
-}
-
-export interface Obstacle {
-  x: number;
-  y: number;
-  radius: number;
-  type: 'drone' | 'mine' | 'barrier' | 'spike';
-  lane: 'air' | 'ground';
-  width?: number;
-  height?: number;
-  offsetY: number; // For floating animation
 }
 
 export type CostumeId = 'classic' | 'symbiote' | 'miles' | 'gwen' | 'iron' | '2099' | 'noir';
@@ -48,12 +32,9 @@ export interface GameState {
     rotation: number;
     leftWeb: Web;
     rightWeb: Web;
-    invulnerableUntil: number;
   };
   buildings: Building[];
-  obstacles: Obstacle[];
   score: number;
-  lives: number;
   cameraX: number;
   cameraY: number;
   pointer: Point;
