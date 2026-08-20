@@ -1,55 +1,37 @@
 import React, { useEffect, useRef } from 'react';
-import { GameState, Building, Point, CostumeId, Obstacle } from '../types';
+import { GameState, Building, Point, CostumeId, Web } from '../types';
 
-const PIXELS_PER_METER = 35;
-const GRAVITY = 9.81 * PIXELS_PER_METER;
-const AIR_DRAG_PER_SECOND = 0.22;
-const FIXED_TIMESTEP = 1 / 120;
-const MAX_FRAME_DELTA = 1 / 30;
+const GRAVITY = 0.6;
+const AIR_FRICTION = 0.995;
+const RETRACT_SPEED = 4; // Base retract speed
+const DUAL_RETRACT_MULTIPLIER = 2.5; // Stronger pull when both webs are active
 const BUILDING_SPACING = 300;
 const ABYSS_Y = 2000;
-const GROUND_Y = ABYSS_Y - 40;
-const BASE_RUN_SPEED = 420;
-const JUMP_VELOCITY = -620;
-const JUMP_BUFFER_MS = 150;
-const WEB_SHOT_SPEED = 1500;
-const WEB_RANGE_MIN = 160;
-const WEB_RANGE_MAX = 620;
-const WEB_SPRING_STIFFNESS = 28;
-const WEB_DAMPING = 6;
-const WEB_RETRACT_PER_SECOND = 26;
-const WEB_TANGENTIAL_PUSH = 90;
 
 interface GameCanvasProps {
   costume: CostumeId;
   onGameOver: (score: number) => void;
   onScoreUpdate: (score: number) => void;
-  onLivesUpdate: (lives: number) => void;
 }
 
-export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onScoreUpdate, onLivesUpdate }) => {
+export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onScoreUpdate }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const requestRef = useRef<number | null>(null);
-  const previousTimeRef = useRef<number | null>(null);
-  const accumulatorRef = useRef(0);
-  const jumpBufferUntilRef = useRef(0);
+  const requestRef = useRef<number>(null);
+  const shotTimestampsRef = useRef<number[]>([]);
   const stateRef = useRef<GameState>({
     player: {
       x: 0,
-      y: GROUND_Y - 15,
-      vx: BASE_RUN_SPEED,
-      vy: 0,
+      y: ABYSS_Y - 600,
+      vx: 25,
+      vy: -15,
       radius: 15,
       rotation: 0,
-      leftWeb: { active: false, anchor: null, restLength: 0, targetAnchor: null, tip: null, shooting: false, shotTension: 0 },
-      rightWeb: { active: false, anchor: null, restLength: 0, targetAnchor: null, tip: null, shooting: false, shotTension: 0 },
-      invulnerableUntil: 0,
+      leftWeb: { active: false, anchor: null, restLength: 0 },
+      rightWeb: { active: false, anchor: null, restLength: 0 },
     },
     buildings: [],
-    obstacles: [],
     score: 0,
-    lives: 5,
     cameraX: -200,
     cameraY: ABYSS_Y - 600,
     pointer: { x: 500, y: 300 },
@@ -72,38 +54,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Initialize buildings and obstacles
+  // Initialize buildings
   useEffect(() => {
     const initialBuildings: Building[] = [];
-    const initialObstacles: Obstacle[] = [];
     for (let i = -1; i < 10; i++) {
-      const bX = i * BUILDING_SPACING;
-      initialBuildings.push(generateBuilding(bX));
-      if (i > 0) {
-        if (Math.random() > 0.25) {
-          initialObstacles.push(generateGroundObstacle(bX + BUILDING_SPACING * 0.62));
-        }
-      }
+      initialBuildings.push(generateBuilding(i * BUILDING_SPACING));
     }
     stateRef.current.buildings = initialBuildings;
-    stateRef.current.obstacles = initialObstacles;
   }, []);
-
-  const generateGroundObstacle = (x: number): Obstacle => {
-    const isSpike = Math.random() > 0.45;
-    const width = isSpike ? 44 : 62;
-    const height = isSpike ? 34 : 28;
-    return {
-      x,
-      y: GROUND_Y,
-      radius: Math.max(width, height) * 0.4,
-      type: isSpike ? 'spike' : 'barrier',
-      lane: 'ground',
-      width,
-      height,
-      offsetY: Math.random() * Math.PI * 2,
-    };
-  };
 
   const generateBuilding = (x: number): Building => {
     const width = 120 + Math.random() * 150;
@@ -116,15 +74,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     ];
     const colorPair = colors[Math.floor(Math.random() * colors.length)];
     
-    const windows: Point[] = [];
-    for (let wx = 15; wx < width - 15; wx += 30) {
-      for (let wy = 20; wy < height; wy += 40) {
-        if (Math.random() > 0.4) {
-          windows.push({ x: wx, y: wy });
-        }
-      }
-    }
-    
     return {
       x,
       y: ABYSS_Y - height,
@@ -134,148 +83,133 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       darkColor: colorPair.dark,
       hasAntenna: Math.random() > 0.6,
       antennaX: width * 0.2 + Math.random() * (width * 0.6),
-      windows,
     };
   };
 
-  const queueJump = () => {
-    jumpBufferUntilRef.current = Date.now() + JUMP_BUFFER_MS;
-  };
-
-  const getWorldPointer = (event: MouseEvent) => {
+  const getPointerPos = (clientX: number, clientY: number): Point => {
     const canvas = canvasRef.current;
-    const state = stateRef.current;
-    if (!canvas) {
-      return { x: state.player.x + 260, y: state.player.y - 220 };
-    }
+    if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const localX = event.clientX - rect.left;
-    const localY = event.clientY - rect.top;
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
     return {
-      x: localX + state.cameraX,
-      y: localY + state.cameraY,
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY
     };
   };
 
-  const getNearestAnchor = (aimPoint: Point, playerX: number) => {
+  const handlePointerMove = (e: React.MouseEvent) => {
+    stateRef.current.pointer = getPointerPos(e.clientX, e.clientY);
+  };
+
+  const fireWeb = (web: Web, pos: Point) => {
+    const now = Date.now();
+    shotTimestampsRef.current = shotTimestampsRef.current.filter(t => now - t < 1000);
+    
+    if (shotTimestampsRef.current.length >= 2) {
+      return; // Rate limit exceeded: max 2 webs per second
+    }
+
+    shotTimestampsRef.current.push(now);
+
     const state = stateRef.current;
+    const worldX = pos.x + state.cameraX;
+    const worldY = pos.y + state.cameraY;
+
     let bestAnchor: Point | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
 
-    for (const building of state.buildings) {
-      const roofY = building.y + 12;
-      const candidates: Point[] = [
-        { x: building.x + 12, y: roofY },
-        { x: building.x + building.width * 0.32, y: roofY - 10 },
-        { x: building.x + building.width * 0.68, y: roofY - 8 },
-        { x: building.x + building.width - 12, y: roofY },
-      ];
-
-      for (const candidate of candidates) {
-        const dx = candidate.x - playerX;
-        const dist = Math.hypot(aimPoint.x - candidate.x, aimPoint.y - candidate.y);
-        const playerDist = Math.hypot(candidate.x - playerX, candidate.y - state.player.y);
-        if (playerDist < WEB_RANGE_MIN || playerDist > WEB_RANGE_MAX) continue;
-        const rearAnchorPenalty = dx < 0 && aimPoint.x >= playerX ? Math.abs(dx) * 0.8 : 0;
-        const score = dist + rearAnchorPenalty;
-        if (score < bestScore) {
-          bestScore = score;
-          bestAnchor = candidate;
+    for (const b of state.buildings) {
+      if (worldX >= b.x && worldX <= b.x + b.width) {
+        if (worldY >= b.y) {
+          bestAnchor = { x: worldX, y: worldY };
+        } else {
+          bestAnchor = { x: worldX, y: b.y };
         }
+        break;
       }
     }
 
-    return bestAnchor;
+    if (!bestAnchor) {
+      let minDistance = Infinity;
+      state.buildings.forEach(b => {
+        const corners = [
+          { x: b.x, y: b.y },
+          { x: b.x + b.width, y: b.y }
+        ];
+        corners.forEach(c => {
+          const dist = Math.hypot(c.x - worldX, c.y - worldY);
+          if (dist < minDistance && c.x > state.player.x - 300) {
+            minDistance = dist;
+            bestAnchor = c;
+          }
+        });
+      });
+    }
+
+    if (bestAnchor) {
+      web.active = true;
+      web.anchor = bestAnchor;
+      web.restLength = Math.hypot(bestAnchor.x - state.player.x, bestAnchor.y - state.player.y);
+    }
   };
 
-  const shootWeb = (webKey: 'leftWeb' | 'rightWeb', targetHint?: Point) => {
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (stateRef.current.isGameOver) return;
+    const isRightClick = e.button === 2;
+    const pos = getPointerPos(e.clientX, e.clientY);
+    stateRef.current.pointer = pos;
+    const web = isRightClick ? stateRef.current.player.rightWeb : stateRef.current.player.leftWeb;
+    fireWeb(web, pos);
+  };
+
+  const handleMouseUp = (e: React.MouseEvent) => {
+    const isRightClick = e.button === 2;
+    const web = isRightClick ? stateRef.current.player.rightWeb : stateRef.current.player.leftWeb;
+    web.active = false;
+    web.anchor = null;
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (stateRef.current.isGameOver) return;
     const state = stateRef.current;
-    const player = state.player;
-    const web = player[webKey];
-    const fallbackTarget = {
-      x: player.x + 260,
-      y: player.y - 220,
-    };
-    const aimPoint = targetHint ?? fallbackTarget;
-    const anchor = getNearestAnchor(aimPoint, player.x);
-    if (!anchor) return;
-
-    const shoulderOffset = webKey === 'leftWeb' ? -8 : 8;
-    web.active = false;
-    web.shooting = true;
-    web.shotTension = 0;
-    web.anchor = null;
-    web.targetAnchor = anchor;
-    web.tip = { x: player.x, y: player.y + shoulderOffset };
+    
+    Array.from(e.changedTouches).forEach(touch => {
+      const pos = getPointerPos(touch.clientX, touch.clientY);
+      if (touch.clientX < window.innerWidth / 2) {
+        fireWeb(state.player.leftWeb, pos);
+      } else {
+        fireWeb(state.player.rightWeb, pos);
+      }
+    });
   };
 
-  const releaseWeb = (webKey: 'leftWeb' | 'rightWeb') => {
-    const web = stateRef.current.player[webKey];
-    web.active = false;
-    web.shooting = false;
-    web.anchor = null;
-    web.targetAnchor = null;
-    web.tip = null;
-    web.shotTension = 0;
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length > 0) {
+      stateRef.current.pointer = getPointerPos(e.touches[0].clientX, e.touches[0].clientY);
+    }
   };
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        e.preventDefault();
-        queueJump();
-      }
-      if (e.code === 'KeyQ') {
-        e.preventDefault();
-        shootWeb('leftWeb');
-      }
-      if (e.code === 'KeyE') {
-        e.preventDefault();
-        shootWeb('rightWeb');
-      }
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'KeyQ') {
-        releaseWeb('leftWeb');
-      }
-      if (e.code === 'KeyE') {
-        releaseWeb('rightWeb');
-      }
-    };
-    const onMouseMove = (e: MouseEvent) => {
-      stateRef.current.pointer = getWorldPointer(e);
-    };
-    const onMouseDown = (e: MouseEvent) => {
-      if (e.button === 0) {
-        shootWeb('leftWeb', getWorldPointer(e));
-      }
-      if (e.button === 2) {
-        shootWeb('rightWeb', getWorldPointer(e));
-      }
-    };
-    const onMouseUp = (e: MouseEvent) => {
-      if (e.button === 0) {
-        releaseWeb('leftWeb');
-      }
-      if (e.button === 2) {
-        releaseWeb('rightWeb');
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mouseup', onMouseUp);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-  }, []);
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const state = stateRef.current;
+    let hasLeft = false;
+    let hasRight = false;
+    
+    Array.from(e.touches).forEach(touch => {
+      if (touch.clientX < window.innerWidth / 2) hasLeft = true;
+      else hasRight = true;
+    });
 
-  const update = (dt: number) => {
+    if (!hasLeft) {
+      state.player.leftWeb.active = false;
+      state.player.leftWeb.anchor = null;
+    }
+    if (!hasRight) {
+      state.player.rightWeb.active = false;
+      state.player.rightWeb.anchor = null;
+    }
+  };
+
+  const update = () => {
     const state = stateRef.current;
     if (state.isGameOver) return;
     
@@ -285,85 +219,51 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
     const player = state.player;
 
-    // Apply gravity
-    player.vy += GRAVITY * dt;
+    // Apply Gravity
+    player.vy += GRAVITY;
 
-    const drag = Math.exp(-AIR_DRAG_PER_SECOND * dt);
-    player.vx *= drag;
-    player.vy *= drag;
-    const targetRunSpeed = BASE_RUN_SPEED + Math.min(260, state.score * 0.6);
-    const hasRearAnchor =
-      (player.leftWeb.active && player.leftWeb.anchor && player.leftWeb.anchor.x < player.x - player.radius) ||
-      (player.rightWeb.active && player.rightWeb.anchor && player.rightWeb.anchor.x < player.x - player.radius);
-    const runAssist = hasRearAnchor ? 0.02 : 0.1;
-    if (!(hasRearAnchor && player.vx < 0)) {
-      player.vx += (targetRunSpeed - player.vx) * runAssist;
-    }
+    const bothActive = player.leftWeb.active && player.rightWeb.active;
+    const currentRetractSpeed = bothActive ? RETRACT_SPEED * DUAL_RETRACT_MULTIPLIER : RETRACT_SPEED;
 
-    const applyWebPhysics = (webKey: 'leftWeb' | 'rightWeb') => {
-      const web = player[webKey];
-      if (web.shooting && web.tip && web.targetAnchor) {
-        const toTargetX = web.targetAnchor.x - web.tip.x;
-        const toTargetY = web.targetAnchor.y - web.tip.y;
-        const distance = Math.hypot(toTargetX, toTargetY);
-        if (distance < WEB_SHOT_SPEED * dt) {
-          web.tip = { ...web.targetAnchor };
-          web.anchor = { ...web.targetAnchor };
-          web.active = true;
-          web.shooting = false;
-          web.targetAnchor = null;
-          web.shotTension = 1;
-          web.restLength = Math.max(80, Math.hypot(player.x - web.anchor.x, player.y - web.anchor.y) * 0.88);
-        } else if (distance > 0.0001) {
-          const travel = WEB_SHOT_SPEED * dt;
-          web.tip.x += (toTargetX / distance) * travel;
-          web.tip.y += (toTargetY / distance) * travel;
-          web.shotTension = Math.min(1, web.shotTension + dt * 2);
-        }
-      }
-
+    const applyWeb = (web: Web) => {
       if (!web.active || !web.anchor) return;
       const dx = web.anchor.x - player.x;
       const dy = web.anchor.y - player.y;
-      const dist = Math.hypot(dx, dy);
-      web.restLength = Math.max(70, web.restLength - WEB_RETRACT_PER_SECOND * dt);
-      if (dist <= web.restLength || dist < 0.0001) {
-        web.shotTension = Math.max(0, web.shotTension - dt * 0.9);
-        return;
+      const distance = Math.hypot(dx, dy);
+
+      if (web.restLength > 80) {
+        web.restLength -= currentRetractSpeed;
       }
 
-      const nx = dx / dist;
-      const ny = dy / dist;
-      const stretch = dist - web.restLength;
-      const radialSpeed = player.vx * nx + player.vy * ny;
-      const springForce = stretch * WEB_SPRING_STIFFNESS;
-      const dampingForce = radialSpeed * WEB_DAMPING;
-      const pull = springForce - dampingForce;
+      if (distance > web.restLength) {
+        const diff = distance - web.restLength;
+        const nx = dx / distance;
+        const ny = dy / distance;
 
-      player.vx += nx * pull * dt;
-      player.vy += ny * pull * dt;
-      player.vx += -ny * WEB_TANGENTIAL_PUSH * dt;
-      web.shotTension = Math.min(1, 0.45 + stretch / 180);
+        player.x += nx * diff;
+        player.y += ny * diff;
+
+        const dot = player.vx * nx + player.vy * ny;
+        if (dot < 0) {
+          player.vx -= dot * nx;
+          player.vy -= dot * ny;
+        }
+      }
     };
 
-    applyWebPhysics('leftWeb');
-    applyWebPhysics('rightWeb');
+    // Apply constraints sequentially (multiple iterations for stability if both active)
+    for (let i = 0; i < 3; i++) {
+      applyWeb(player.leftWeb);
+      applyWeb(player.rightWeb);
+    }
+
+    // Apply Air Friction
+    player.vx *= AIR_FRICTION;
+    player.vy *= AIR_FRICTION;
 
     // Update Position
-    player.x += player.vx * dt;
-    player.y += player.vy * dt;
-
-    // Ground collision
-    const groundLevel = GROUND_Y - player.radius;
-    const canJump = player.y >= groundLevel - 2;
-    if (jumpBufferUntilRef.current > Date.now() && canJump) {
-      player.vy = JUMP_VELOCITY;
-      jumpBufferUntilRef.current = 0;
-    }
-    if (player.y > groundLevel) {
-      player.y = groundLevel;
-      player.vy = 0;
-    }
+    player.x += player.vx;
+    player.y += player.vy;
 
     // Smooth Camera Follow
     const targetCamX = player.x - canvasWidth * 0.35;
@@ -375,51 +275,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     const maxCamY = ABYSS_Y - canvasHeight + 200;
     if (state.cameraY > maxCamY) state.cameraY = maxCamY;
 
-    // Generate new buildings and obstacles
+    // Generate new buildings
     const lastBuilding = state.buildings[state.buildings.length - 1];
     if (lastBuilding.x - state.cameraX < canvasWidth + 500) {
-      const nextX = lastBuilding.x + BUILDING_SPACING + Math.random() * 200;
-      state.buildings.push(generateBuilding(nextX));
-      if (Math.random() > 0.2) {
-        state.obstacles.push(generateGroundObstacle(nextX - BUILDING_SPACING * 0.15 + (Math.random() * 150 - 75)));
-      }
+      state.buildings.push(generateBuilding(lastBuilding.x + BUILDING_SPACING + Math.random() * 200));
     }
 
-    // Remove old buildings and obstacles
+    // Remove old buildings
     if (state.buildings[0].x - state.cameraX < -1000) {
       state.buildings.shift();
-    }
-    if (state.obstacles.length > 0 && state.obstacles[0].x - state.cameraX < -1000) {
-      state.obstacles.shift();
-    }
-
-    // Obstacle collision and movement
-    const now = Date.now();
-    for (const obs of state.obstacles) {
-      // Floating animation
-      obs.offsetY += 0.05;
-      const actualY = obs.y;
-      const halfW = (obs.width ?? obs.radius * 2) / 2;
-      const halfH = (obs.height ?? obs.radius * 2) / 2;
-
-      if (now > player.invulnerableUntil) {
-        const hit = Math.abs(player.x - obs.x) < player.radius + halfW && Math.abs(player.y - (actualY - halfH)) < player.radius + halfH;
-        if (hit) {
-          state.lives -= 1;
-          onLivesUpdate(state.lives);
-          player.invulnerableUntil = now + 1500; // 1.5s invulnerability
-          
-          // Bounce back
-          player.vx *= -0.2;
-          player.vy = -220;
-          
-          if (state.lives <= 0) {
-            state.isGameOver = true;
-            onGameOver(state.score);
-          }
-          break; // Only hit one obstacle per frame
-        }
-      }
     }
 
     // Score based on distance
@@ -503,161 +367,52 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
       // Windows
       ctx.fillStyle = 'rgba(255, 255, 150, 0.15)';
-      
-      // Only draw windows that are visible on screen
-      const minVisibleY = state.cameraY - 50;
-      const maxVisibleY = state.cameraY + canvasHeight + 50;
-      
-      // Batch window drawing for performance
-      ctx.beginPath();
-      b.windows.forEach(w => {
-        const worldY = b.y + w.y;
-        if (worldY > minVisibleY && worldY < maxVisibleY) {
-          ctx.rect(b.x + w.x, worldY, 12, 20);
+      for (let wx = b.x + 15; wx < b.x + b.width - 15; wx += 30) {
+        const startY = Math.max(b.y + 20, state.cameraY - 50);
+        const endY = Math.min(b.y + canvasHeight * 3, state.cameraY + canvasHeight + 50);
+        const gridOffset = startY % 40;
+        for (let wy = startY - gridOffset; wy < endY; wy += 40) {
+          if (wy < b.y + 20) continue;
+          const pseudoRandom = Math.abs(Math.sin(wx * 12.9898 + wy * 78.233) * 43758.5453) % 1;
+          if (pseudoRandom > 0.4) {
+            ctx.fillRect(wx, wy, 12, 20);
+          }
         }
-      });
-      ctx.fill();
-    });
-
-    // Draw Wind Lines (Speed effect)
-    const speed = Math.hypot(state.player.vx, state.player.vy);
-    const visualSpeed = speed / 60;
-    if (visualSpeed > 20) {
-      ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(0.3, (visualSpeed - 20) / 100)})`;
-      ctx.lineWidth = 1;
-      for (let i = 0; i < 15; i++) {
-        const x = (Math.random() * canvasWidth);
-        const y = (Math.random() * canvasHeight);
-        const len = visualSpeed * 2;
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x - (state.player.vx / speed) * len, y - (state.player.vy / speed) * len);
-        ctx.stroke();
       }
-    }
-
-    // Ground plane + lane markings
-    const groundTop = GROUND_Y;
-    ctx.fillStyle = '#111827';
-    ctx.fillRect(state.cameraX - 400, groundTop, canvasWidth + 1200, canvasHeight * 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.setLineDash([26, 18]);
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(state.cameraX - 300, groundTop + 36);
-    ctx.lineTo(state.cameraX + canvasWidth + 900, groundTop + 36);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Draw Obstacles
-    state.obstacles.forEach(obs => {
-      const actualY = obs.lane === 'air' ? obs.y + Math.sin(obs.offsetY) * 20 : obs.y;
-      
-      ctx.save();
-      ctx.translate(obs.x, actualY);
-      
-      if (obs.type === 'mine') {
-        // Spiky floating mine
-        ctx.fillStyle = '#ef4444';
-        ctx.beginPath();
-        ctx.arc(0, 0, obs.radius, 0, Math.PI * 2);
-        ctx.fill();
-        
-        ctx.fillStyle = '#b91c1c';
-        for (let i = 0; i < 8; i++) {
-          const angle = (i / 8) * Math.PI * 2 + obs.offsetY;
-          ctx.beginPath();
-          ctx.moveTo(Math.cos(angle) * obs.radius, Math.sin(angle) * obs.radius);
-          ctx.lineTo(Math.cos(angle - 0.2) * (obs.radius - 5), Math.sin(angle - 0.2) * (obs.radius - 5));
-          ctx.lineTo(Math.cos(angle) * (obs.radius + 8), Math.sin(angle) * (obs.radius + 8));
-          ctx.lineTo(Math.cos(angle + 0.2) * (obs.radius - 5), Math.sin(angle + 0.2) * (obs.radius - 5));
-          ctx.fill();
-        }
-        
-        // Glowing center
-        ctx.fillStyle = '#fca5a5';
-        ctx.beginPath();
-        ctx.arc(0, 0, obs.radius * 0.4, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (obs.type === 'drone') {
-        // Drone
-        ctx.fillStyle = '#64748b';
-        ctx.fillRect(-obs.radius, -obs.radius * 0.4, obs.radius * 2, obs.radius * 0.8);
-        
-        ctx.fillStyle = '#ef4444';
-        ctx.beginPath();
-        ctx.arc(0, 0, obs.radius * 0.3, 0, Math.PI * 2);
-        ctx.fill();
-        
-        // Propellers
-        ctx.strokeStyle = '#cbd5e1';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-obs.radius, -obs.radius * 0.4);
-        ctx.lineTo(-obs.radius + Math.cos(obs.offsetY * 10) * 10, -obs.radius * 0.4 - 5);
-        ctx.moveTo(obs.radius, -obs.radius * 0.4);
-        ctx.lineTo(obs.radius + Math.cos(obs.offsetY * 10) * 10, -obs.radius * 0.4 - 5);
-        ctx.stroke();
-      } else if (obs.type === 'barrier') {
-        const width = obs.width ?? 60;
-        const height = obs.height ?? 28;
-        ctx.fillStyle = '#374151';
-        ctx.fillRect(-width / 2, -height, width, height);
-        ctx.fillStyle = '#9ca3af';
-        ctx.fillRect(-width / 2, -height, width, 4);
-        for (let i = -width / 2 + 8; i < width / 2 - 4; i += 14) {
-          ctx.fillStyle = '#ef4444';
-          ctx.fillRect(i, -height + 6, 6, 6);
-        }
-      } else {
-        const width = obs.width ?? 44;
-        const height = obs.height ?? 34;
-        ctx.fillStyle = '#ef4444';
-        ctx.beginPath();
-        ctx.moveTo(-width / 2, 0);
-        ctx.lineTo(0, -height);
-        ctx.lineTo(width / 2, 0);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = '#fca5a5';
-        ctx.fillRect(-2, -height * 0.72, 4, height * 0.55);
-      }
-      
-      ctx.restore();
     });
 
     const colors = getCostumeColors(costume);
 
+    // Draw Webs
+    const drawWeb = (web: Web) => {
+      if (web.active && web.anchor) {
+        ctx.beginPath();
+        ctx.moveTo(state.player.x, state.player.y);
+        ctx.lineTo(web.anchor.x, web.anchor.y);
+        ctx.strokeStyle = colors.web;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.arc(web.anchor.x, web.anchor.y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = colors.web;
+        ctx.fill();
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = colors.web;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    };
+    drawWeb(state.player.leftWeb);
+    drawWeb(state.player.rightWeb);
+
     // Draw Player
     const p = state.player;
-    const velocityAngle = Math.atan2(p.vy, p.vx);
-    
-    // Flashing effect if invulnerable
-    const isInvulnerable = Date.now() < p.invulnerableUntil;
-    if (isInvulnerable && Math.floor(Date.now() / 100) % 2 === 0) {
-      ctx.globalAlpha = 0.5;
-    }
-    
-    // Motion Blur (Trail)
-    if (visualSpeed > 15) {
-      ctx.globalAlpha = 0.3;
-      for (let i = 1; i < 4; i++) {
-        ctx.save();
-        ctx.translate(p.x - (p.vx / 60) * i * 0.5, p.y - (p.vy / 60) * i * 0.5);
-        ctx.rotate(velocityAngle);
-        ctx.fillStyle = colors.primary;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 14, 10, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-      ctx.globalAlpha = 1.0;
-    }
-
     ctx.save();
     ctx.translate(p.x, p.y);
     
     // Rotation based on velocity
+    const velocityAngle = Math.atan2(p.vy, p.vx);
     ctx.rotate(velocityAngle);
 
     // Legs (trailing behind)
@@ -691,8 +446,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
     ctx.restore();
 
-    // Arms in running pose
-    const drawArm = (offsetY: number) => {
+    // Arms shooting webs (drawn separately to point at anchors)
+    const drawArm = (web: Web, offsetY: number) => {
       ctx.strokeStyle = colors.primary;
       ctx.lineWidth = 5;
       ctx.lineCap = 'round';
@@ -702,99 +457,44 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
       const shoulderY = p.y + Math.sin(velocityAngle) * 5 + Math.cos(velocityAngle) * offsetY;
       ctx.moveTo(shoulderX, shoulderY);
       
-      const runCycle = Math.sin(performance.now() / 110);
-      const trailAngle = velocityAngle + Math.PI + (offsetY > 0 ? 0.5 : -0.5) + runCycle * 0.2;
-      ctx.lineTo(shoulderX + Math.cos(trailAngle) * 15, shoulderY + Math.sin(trailAngle) * 15);
-      ctx.stroke();
-    };
-
-    drawArm(-6); // Left arm
-    drawArm(6); // Right arm
-
-    const drawWeb = (web: typeof p.leftWeb, offsetY: number) => {
-      if (!web.anchor && !web.tip && !web.targetAnchor) return;
-      const shoulderX = p.x + Math.cos(velocityAngle) * 5 - Math.sin(velocityAngle) * offsetY;
-      const shoulderY = p.y + Math.sin(velocityAngle) * 5 + Math.cos(velocityAngle) * offsetY;
-      const end = web.active
-        ? web.anchor
-        : web.shooting
-          ? web.tip
-          : web.targetAnchor;
-      if (!end) return;
-
-      const tension = Math.min(1, Math.max(0.15, web.shotTension));
-      const dx = end.x - shoulderX;
-      const dy = end.y - shoulderY;
-      const perpX = -dy;
-      const perpY = dx;
-      const perpLen = Math.max(1, Math.hypot(perpX, perpY));
-      const sag = web.active ? Math.min(18, Math.hypot(dx, dy) * 0.06) * (1 - tension) : 0;
-      const cpX = shoulderX + dx * 0.5 + (perpX / perpLen) * sag;
-      const cpY = shoulderY + dy * 0.5 + (perpY / perpLen) * sag;
-
-      ctx.lineWidth = 1 + tension * 1.6;
-      ctx.strokeStyle = `rgba(240, 244, 255, ${0.55 + tension * 0.45})`;
-      ctx.beginPath();
-      ctx.moveTo(shoulderX, shoulderY);
-      ctx.quadraticCurveTo(cpX, cpY, end.x, end.y);
-      ctx.stroke();
-
       if (web.active && web.anchor) {
-        ctx.fillStyle = 'rgba(248,250,252,0.75)';
-        ctx.beginPath();
-        ctx.arc(web.anchor.x, web.anchor.y, 2.5, 0, Math.PI * 2);
-        ctx.fill();
+        const dx = web.anchor.x - shoulderX;
+        const dy = web.anchor.y - shoulderY;
+        const dist = Math.hypot(dx, dy);
+        const armLen = 20;
+        ctx.lineTo(shoulderX + (dx/dist)*armLen, shoulderY + (dy/dist)*armLen);
+      } else {
+        // Trail arm behind
+        const trailAngle = velocityAngle + Math.PI + (offsetY > 0 ? 0.5 : -0.5);
+        ctx.lineTo(shoulderX + Math.cos(trailAngle)*15, shoulderY + Math.sin(trailAngle)*15);
       }
+      ctx.stroke();
     };
 
-    drawWeb(p.leftWeb, -6);
-    drawWeb(p.rightWeb, 6);
+    drawArm(p.leftWeb, -6); // Left arm
+    drawArm(p.rightWeb, 6); // Right arm
 
     ctx.restore();
-    ctx.globalAlpha = 1.0; // Reset alpha after player draw
 
-    // Draw Speed Bar (Mobile-based UI)
-    const barWidth = 150;
-    const barHeight = 8;
-    const barX = canvasWidth / 2 - barWidth / 2;
-    const barY = canvasHeight - 40;
-    
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.roundRect?.(barX - 5, barY - 20, barWidth + 10, barHeight + 25, 10);
-    ctx.fill();
-    
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('HIZ', canvasWidth / 2, barY - 8);
-    
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.fillRect(barX, barY, barWidth, barHeight);
-    
-    const speedFill = Math.min(1, visualSpeed / 60);
-    const speedColor = visualSpeed > 40 ? '#ef4444' : visualSpeed > 20 ? '#eab308' : '#22c55e';
-    ctx.fillStyle = speedColor;
-    ctx.fillRect(barX, barY, barWidth * speedFill, barHeight);
+    // Draw Crosshair (Aiming indicator)
+    if (!state.isGameOver) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(state.pointer.x, state.pointer.y, 10, 0, Math.PI * 2);
+      ctx.moveTo(state.pointer.x - 15, state.pointer.y);
+      ctx.lineTo(state.pointer.x + 15, state.pointer.y);
+      ctx.moveTo(state.pointer.x, state.pointer.y - 15);
+      ctx.lineTo(state.pointer.x, state.pointer.y + 15);
+      ctx.stroke();
+    }
   };
 
-  const loop = (time: number) => {
+  const loop = () => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
-
-    if (previousTimeRef.current === null) {
-      previousTimeRef.current = time;
-    }
-
-    const rawDelta = (time - previousTimeRef.current) / 1000;
-    previousTimeRef.current = time;
-    accumulatorRef.current += Math.min(rawDelta, MAX_FRAME_DELTA);
-
-    while (accumulatorRef.current >= FIXED_TIMESTEP) {
-      update(FIXED_TIMESTEP);
-      accumulatorRef.current -= FIXED_TIMESTEP;
-    }
-
     if (ctx) {
+      update();
       draw(ctx);
     }
     requestRef.current = requestAnimationFrame(loop);
@@ -803,7 +503,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
   useEffect(() => {
     requestRef.current = requestAnimationFrame(loop);
     return () => {
-      if (requestRef.current !== null) cancelAnimationFrame(requestRef.current);
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
   }, []);
 
@@ -811,14 +511,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     <div ref={containerRef} className="relative w-full h-full flex items-center justify-center bg-black overflow-hidden touch-none">
       <canvas
         ref={canvasRef}
-        onTouchStart={(e) => {
-          if (e.cancelable) e.preventDefault();
-          queueJump();
-        }}
+        onMouseMove={handlePointerMove}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
         onContextMenu={(e) => e.preventDefault()}
-        className="block cursor-none touch-none select-none"
-        style={{ WebkitTapHighlightColor: 'transparent' }}
+        className="block cursor-none"
       />
     </div>
   );
 };
+
