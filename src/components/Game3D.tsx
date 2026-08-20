@@ -113,8 +113,6 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
     let closest = Infinity;
 
     for (const building of buildingsRef.current) {
-      if (building.position.z > state.current.pos.z) continue;
-
       scratchMinRef.current.set(
         building.position.x - building.size.x / 2,
         building.position.y - building.size.y / 2,
@@ -260,8 +258,14 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
         s.vel.addScaledVector(GRAVITY, dt);
       }
       const activeWebCount = Number(s.leftWeb.active) + Number(s.rightWeb.active);
+      const hasRearAnchor =
+        (s.leftWeb.active && s.leftWeb.anchor.z > s.pos.z + PLAYER_RADIUS) ||
+        (s.rightWeb.active && s.rightWeb.anchor.z > s.pos.z + PLAYER_RADIUS);
       const forwardScale = activeWebCount > 0 ? WEB_FORWARD_FORCE_SCALE : 1;
-      s.vel.z -= FORWARD_FORCE * forwardScale * dt;
+      const shouldSuspendForwardDrive = hasRearAnchor && s.vel.z > 0;
+      if (!shouldSuspendForwardDrive) {
+        s.vel.z -= FORWARD_FORCE * forwardScale * dt;
+      }
 
       const air = Math.exp(-AIR_DRAG * dt);
       const linear = Math.exp(-LINEAR_DAMPING * dt);

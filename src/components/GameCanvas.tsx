@@ -173,12 +173,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
 
       for (const candidate of candidates) {
         const dx = candidate.x - playerX;
-        if (dx < -120) continue;
         const dist = Math.hypot(aimPoint.x - candidate.x, aimPoint.y - candidate.y);
         const playerDist = Math.hypot(candidate.x - playerX, candidate.y - state.player.y);
         if (playerDist < WEB_RANGE_MIN || playerDist > WEB_RANGE_MAX) continue;
-        if (dist < bestScore) {
-          bestScore = dist;
+        const rearAnchorPenalty = dx < 0 && aimPoint.x >= playerX ? Math.abs(dx) * 0.8 : 0;
+        const score = dist + rearAnchorPenalty;
+        if (score < bestScore) {
+          bestScore = score;
           bestAnchor = candidate;
         }
       }
@@ -291,7 +292,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     player.vx *= drag;
     player.vy *= drag;
     const targetRunSpeed = BASE_RUN_SPEED + Math.min(260, state.score * 0.6);
-    player.vx += (targetRunSpeed - player.vx) * 0.1;
+    const hasRearAnchor =
+      (player.leftWeb.active && player.leftWeb.anchor && player.leftWeb.anchor.x < player.x - player.radius) ||
+      (player.rightWeb.active && player.rightWeb.anchor && player.rightWeb.anchor.x < player.x - player.radius);
+    const runAssist = hasRearAnchor ? 0.02 : 0.1;
+    if (!(hasRearAnchor && player.vx < 0)) {
+      player.vx += (targetRunSpeed - player.vx) * runAssist;
+    }
 
     const applyWebPhysics = (webKey: 'leftWeb' | 'rightWeb') => {
       const web = player[webKey];
