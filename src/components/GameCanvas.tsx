@@ -1,12 +1,14 @@
 import React, { useEffect, useRef } from 'react';
 import { GameState, Building, Point, CostumeId, Web } from '../types';
 
+const GAME_SPEED = 0.85; // Run physics at 85% speed for a slightly slower game
 const GRAVITY = 0.6;
 const AIR_FRICTION = 0.995;
 const RETRACT_SPEED = 4; // Base retract speed
 const DUAL_RETRACT_MULTIPLIER = 2.5; // Stronger pull when both webs are active
 const BUILDING_SPACING = 300;
 const ABYSS_Y = 2000;
+const GROUND_Y = ABYSS_Y;
 
 interface GameCanvasProps {
   costume: CostumeId;
@@ -23,8 +25,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     player: {
       x: 0,
       y: ABYSS_Y - 600,
-      vx: 25,
-      vy: -15,
+      vx: 25 * GAME_SPEED,
+      vy: -15 * GAME_SPEED,
       radius: 15,
       rotation: 0,
       leftWeb: { active: false, anchor: null, restLength: 0 },
@@ -220,10 +222,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     const player = state.player;
 
     // Apply Gravity
-    player.vy += GRAVITY;
+    player.vy += GRAVITY * GAME_SPEED;
 
     const bothActive = player.leftWeb.active && player.rightWeb.active;
-    const currentRetractSpeed = bothActive ? RETRACT_SPEED * DUAL_RETRACT_MULTIPLIER : RETRACT_SPEED;
+    const currentRetractSpeed = (bothActive ? RETRACT_SPEED * DUAL_RETRACT_MULTIPLIER : RETRACT_SPEED) * GAME_SPEED;
 
     const applyWeb = (web: Web) => {
       if (!web.active || !web.anchor) return;
@@ -262,14 +264,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     player.vy *= AIR_FRICTION;
 
     // Update Position
-    player.x += player.vx;
-    player.y += player.vy;
+    player.x += player.vx * GAME_SPEED;
+    player.y += player.vy * GAME_SPEED;
+
+    // Keep the player on the ground instead of falling endlessly.
+    if (player.y + player.radius > GROUND_Y) {
+      player.y = GROUND_Y - player.radius;
+      if (player.vy > 0) player.vy = 0;
+      player.vx *= 0.92;
+    }
 
     // Smooth Camera Follow
     const targetCamX = player.x - canvasWidth * 0.35;
     const targetCamY = player.y - canvasHeight * 0.5;
-    state.cameraX += (targetCamX - state.cameraX) * 0.1;
-    state.cameraY += (targetCamY - state.cameraY) * 0.1;
+    state.cameraX += (targetCamX - state.cameraX) * 0.1 * GAME_SPEED;
+    state.cameraY += (targetCamY - state.cameraY) * 0.1 * GAME_SPEED;
 
     // Clamp Camera Y so we don't see infinitely below ground
     const maxCamY = ABYSS_Y - canvasHeight + 200;
@@ -294,7 +303,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
     }
 
     // Game over conditions
-    if (player.y > state.cameraY + canvasHeight + 50) {
+    if (player.y > GROUND_Y + canvasHeight) {
       state.isGameOver = true;
       onGameOver(state.score);
     }
@@ -380,6 +389,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({ costume, onGameOver, onS
         }
       }
     });
+
+    // Draw Ground
+    const groundGradient = ctx.createLinearGradient(0, GROUND_Y - 40, 0, GROUND_Y + 220);
+    groundGradient.addColorStop(0, '#334155');
+    groundGradient.addColorStop(1, '#020617');
+    ctx.fillStyle = groundGradient;
+    ctx.fillRect(state.cameraX - 100, GROUND_Y, canvasWidth + 200, 260);
+
+    ctx.fillStyle = '#475569';
+    ctx.fillRect(state.cameraX - 100, GROUND_Y, canvasWidth + 200, 12);
+
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
+    ctx.lineWidth = 2;
+    for (let gx = Math.floor((state.cameraX - 100) / 80) * 80; gx < state.cameraX + canvasWidth + 100; gx += 80) {
+      ctx.beginPath();
+      ctx.moveTo(gx, GROUND_Y + 12);
+      ctx.lineTo(gx + 40, GROUND_Y + 260);
+      ctx.stroke();
+    }
 
     const colors = getCostumeColors(costume);
 
