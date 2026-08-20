@@ -13,6 +13,9 @@ interface Game3DProps {
 const GRAVITY = new THREE.Vector3(0, -85, 0);
 const RETRACT_SPEED = 80;
 const FORWARD_FORCE = 36;
+const WEB_FORWARD_FORCE_SCALE = 0.25;
+const WEB_RETRACT_PULL = 32;
+const WEB_BACKWARD_RELEASE_BOOST = 0.22;
 const MAX_VELOCITY = 180;
 const AIR_DRAG = 0.035;
 const LINEAR_DAMPING = 0.12;
@@ -159,7 +162,14 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
       const toAnchor = new THREE.Vector3().subVectors(web.anchor, state.current.pos).normalize();
       const tangentVelocity = state.current.vel.clone().projectOnPlane(toAnchor);
       const incomingSpeed = Math.max(0, state.current.vel.dot(toAnchor));
+      const currentSpeed = state.current.vel.length();
       state.current.vel.copy(tangentVelocity.addScaledVector(toAnchor, incomingSpeed * WEB_ATTACH_BOOST));
+
+      // If the web catches behind or beside the player, keep enough tangent
+      // energy for a backwards slingshot instead of letting forward drive erase it.
+      if (tangentVelocity.z > 0 && state.current.vel.z <= 0) {
+        state.current.vel.z = Math.min(currentSpeed * 0.45, tangentVelocity.z);
+      }
     }
   };
 
@@ -178,15 +188,16 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
       const speed = s.vel.length();
       const upwardFactor = THREE.MathUtils.clamp((tangentDir.y + 0.1) / 1.1, 0, 1);
       const forwardFactor = THREE.MathUtils.clamp(-tangentDir.z, 0, 1);
+      const backwardFactor = THREE.MathUtils.clamp(tangentDir.z, 0, 1);
       const diveFactor = THREE.MathUtils.clamp(-tangentDir.y, 0, 1);
 
       // Release angle controls launch and glide feel.
-      const launchBoost = speed * (0.08 + 0.18 * forwardFactor);
+      const launchBoost = speed * (0.08 + 0.18 * forwardFactor + WEB_BACKWARD_RELEASE_BOOST * backwardFactor);
       s.vel.addScaledVector(tangentDir, launchBoost);
       s.vel.y += speed * (0.08 * upwardFactor - 0.04 * diveFactor);
 
-      s.glideTimer = GLIDE_DURATION * (0.55 + 0.45 * forwardFactor);
-      s.glideLift = 14 * upwardFactor + 6 * forwardFactor;
+      s.glideTimer = GLIDE_DURATION * (0.55 + 0.45 * Math.max(forwardFactor, backwardFactor));
+      s.glideLift = 14 * upwardFactor + 6 * Math.max(forwardFactor, backwardFactor);
     }
 
     releasedWeb.active = false;
@@ -226,11 +237,14 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
       // Position based correction keeps the rope numerically stable at high speed.
       s.pos.addScaledVector(dir, -excess * CONSTRAINT_STIFFNESS);
 
-      // Remove outward radial velocity while keeping tangential motion.
+      // Remove outward radial velocity while keeping tangential motion, then add
+      // retract pull toward the anchor. This allows anchors behind the player to
+      // pull and throw the player backwards instead of only behaving like a brake.
       const radialSpeed = s.vel.dot(dir);
       if (radialSpeed > 0) {
         s.vel.addScaledVector(dir, -radialSpeed * (1 + CONSTRAINT_DAMPING));
       }
+      s.vel.addScaledVector(dir, -WEB_RETRACT_PULL * dt);
     };
 
     while (s.accumulator >= PHYSICS_SUBSTEP) {
@@ -245,7 +259,9 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
       } else {
         s.vel.addScaledVector(GRAVITY, dt);
       }
-      s.vel.z -= FORWARD_FORCE * dt;
+      const activeWebCount = Number(s.leftWeb.active) + Number(s.rightWeb.active);
+      const forwardScale = activeWebCount > 0 ? WEB_FORWARD_FORCE_SCALE : 1;
+      s.vel.z -= FORWARD_FORCE * forwardScale * dt;
 
       const air = Math.exp(-AIR_DRAG * dt);
       const linear = Math.exp(-LINEAR_DAMPING * dt);
@@ -278,7 +294,6 @@ const Player = ({ costume, onGameOver, onScoreUpdate, buildingsRef }: { costume:
         solveWebConstraint(s.rightWeb, dt);
       }
 
-      const activeWebCount = Number(s.leftWeb.active) + Number(s.rightWeb.active);
       if (activeWebCount === 2) {
         s.vel.y *= DUAL_WEB_STABILITY;
       }
